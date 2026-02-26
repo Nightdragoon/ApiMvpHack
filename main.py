@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from starlette.responses import JSONResponse
 from datetime import date
 from Dtos.CrearProductoDto import CrearProductoDto
+from Dtos.LoginDto import LoginDto
 from Dtos.UpdateCrearProductoDto import UpdateProductoDto
 from Dtos import UpdateCajaDto
 from Dtos.EmpleadoDto import EmpleadoDto
@@ -407,6 +408,21 @@ async def delete_caja(id: int):
         result.close()
         db.commit()
         return {"IsSuccess": True, "message": "se a eliminado la caja", "data": caja_eliminada}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+@app.post("/login")
+async def login(login: LoginDto):
+    db = SessionLocal()
+    try:
+        stmt = select(Empleado).where(Empleado.login == login.username).where(Empleado.contrasena == login.password)
+        result = db.execute(stmt)
+        log = result.scalar_one_or_none()
+        if log is None:
+            return {"IsSuccess": False, "message": "no esta registrado comuniquese con un administrador "}
+        return {"IsSuccess": True, "message": "login suceeded", "data": log}
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
     finally:
