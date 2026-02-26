@@ -3,11 +3,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, select, insert, update, delete
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker, Session
-
-engine = create_engine(
-    "sqlite:///./ProyectDb.db",
-    connect_args={"check_same_thread": False},
-)
 from fastapi import FastAPI , Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.params import Query
@@ -213,7 +208,7 @@ async def post_empleados(empleado: EmpleadoDto):
         return {"IsSuccess": False, "message": str(e)}
     finally:
         db.close()
-
+#crud empleado
 @app.put("/UpdateEmpleado")
 async def update_empleado(empleado: UpdateEmpleadoDto):
     db = SessionLocal()
