@@ -427,3 +427,23 @@ async def login(login: LoginDto):
         return {"IsSuccess": False, "message": str(e)}
     finally:
         db.close()
+
+@app.get("/ObtenerPerdida")
+async def obtenerPerdida():
+    db = SessionLocal()
+    try:
+        mes = date.today().replace(day=1)
+        stmt = select(Producto).join(Caja , Producto.id == Caja.idf_producto).where()
+        result = db.execute(stmt).scalars()
+        if len(result) == 0:
+            return {"IsSuccess": False, "message": "no se encontrado la producto"}
+        productos = list(result)
+        precios_mes = list(map(lambda x: x.precio, productos))
+
+        gananciasTotales = sum(precios_mes)
+
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
