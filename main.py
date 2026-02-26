@@ -1,12 +1,11 @@
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, select, insert, update, delete
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import FastAPI , Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.params import Query
-from sqlalchemy import create_engine , select , update , delete , insert
+from sqlalchemy import create_engine , select , update , delete , insert , func
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker
 from starlette.responses import JSONResponse
@@ -348,8 +347,8 @@ async def get_caja(fecha_inicial: Optional[date] = Query(default=None), fecha_fi
         if fecha_final is not None:
             stmt = stmt.where(Base.classes.Caja.dia <= fecha_final)
         result = db.execute(stmt)
-        caja = result.scalar_one_or_none()
-        if caja is None:
+        caja = result.scalars().all()
+        if not caja:
             return {"IsSuccess": False, "message": "no se a encontrado la venta"}
         result.close()
         return {"IsSuccess": True, "message" : "se a encontrado la venta" , "data": caja}
@@ -433,14 +432,42 @@ async def obtenerPerdida():
     db = SessionLocal()
     try:
         mes = date.today().replace(day=1)
-        stmt = select(Producto).join(Caja , Producto.id == Caja.idf_producto).where()
-        result = db.execute(stmt).scalars()
-        if len(result) == 0:
+        stmt = (
+            select(
+                Producto.id.label("producto_id"),
+                Producto.double.label("precio"),  # cambia si tu columna se llama distinto
+                func.count(Caja.id).label("vendidos"),  # cuántas veces aparece en Caja
+                Inventario.cantidad.label("stock")  # cambia si se llama stock/existencia/cantidad
+            )
+            .select_from(Caja)
+            .join(Producto, Producto.id == Caja.idf_producto)
+            .outerjoin(Inventario, Inventario.id_producto == Producto.id)
+            .where(Caja.dia >= mes)
+            .group_by(Producto.id, Producto.double, Inventario.cantidad)
+            .order_by(func.count(Caja.id).desc())
+        )
+        result = db.execute(stmt)
+        productos = result.all()
+        if len(productos) == 0:
             return {"IsSuccess": False, "message": "no se encontrado la producto"}
-        productos = list(result)
+        data = [
+            {
+                "producto_id": r.producto_id,
+                "precio": r.precio,
+                "vendidos": r.vendidos,
+                "stock": r.stock,
+                "ganancia_mes": r.vendidos * r.precio,
+                "perdida_mes": r.precio * r.stock
+
+            }
+            for r in productos
+        ]
+        return {"IsSuccess": False, "message": "se a encontrado la producto" , "data": data}
         precios_mes = list(map(lambda x: x.precio, productos))
 
         gananciasTotales = sum(precios_mes)
+        #de un producto sacarle su venta del mes y su inventario y multiplicarlo por su precio
+
 
 
     except Exception as e:
