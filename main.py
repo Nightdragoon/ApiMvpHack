@@ -95,52 +95,106 @@ def root():
 # -----------------------------
 # CRUD PRODUCTO
 # -----------------------------
-@app.post("/productos")
-def create_producto(payload: ProductoCreate, db: Session = Depends(get_db)):
-    stmt = insert(Producto).values(precio=payload.precio)
-    result = db.execute(stmt)
-    db.commit()
-    new_id = result.inserted_primary_key[0] if result.inserted_primary_key else None
-    return {"IsSuccess": True, "message": "Producto creado", "id": new_id}
+@app.get("/GetProducto")
+async def get_producto(id: Optional[int] = Query(default=None)):
+    db = SessionLocal()
+    try:
+        stmt = select(Base.classes.Producto)
+        if id is not None:
+            stmt = stmt.where(Base.classes.Producto.id == id)
+
+        result = db.execute(stmt)
+
+        if id is not None:
+            producto = result.scalar_one_or_none()
+            result.close()
+            if producto is None:
+                return {"IsSuccess": False, "message": "no se a encontrado el producto"}
+            return {"IsSuccess": True, "message": "se a encontrado el producto", "data": producto}
+
+        productos = result.scalars().all()
+        result.close()
+        if not productos:
+            return {"IsSuccess": False, "message": "no se a encontrado ningun producto"}
+        return {"IsSuccess": True, "message": "se a encontrado productos", "data": productos}
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
 
 
-@app.get("/productos")
-def list_productos(db: Session = Depends(get_db)):
-    rows = db.execute(select(Producto)).scalars().all()
-    return {"IsSuccess": True, "data": [row_to_dict(r) for r in rows]}
+@app.post("/PostProducto")
+async def post_producto(producto: CrearProductoDto):
+    db = SessionLocal()
+    try:
+        values_dict = {PRODUCTO_PRECIO_COL: producto.precio}
+        stmt = insert(Producto).values(**values_dict).returning(Producto)
+        result = db.execute(stmt)
+        producto_creado = result.scalar_one_or_none()
+
+        if producto_creado is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se pudo crear el producto"}
+
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a creado el producto", "data": producto_creado}
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
 
 
-@app.get("/productos/{id}")
-def get_producto(id: int, db: Session = Depends(get_db)):
-    producto = db.execute(select(Producto).where(Producto.id == id)).scalar_one_or_none()
-    if producto is None:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-    return {"IsSuccess": True, "data": row_to_dict(producto)}
+@app.put("/UpdateProducto")
+async def update_producto(producto: UpdateProductoDto):
+    db = SessionLocal()
+    try:
+        values_dict = {PRODUCTO_PRECIO_COL: producto.precio}
+        stmt = (
+            update(Producto)
+            .where(Producto.id == producto.id)
+            .values(**values_dict)
+            .returning(Producto)
+        )
+        result = db.execute(stmt)
+        producto_actualizado = result.scalar_one_or_none()
+
+        if producto_actualizado is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se encontro el producto"}
+
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a actualizado el producto", "data": producto_actualizado}
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
 
 
-@app.put("/productos/{id}")
-def update_producto(id: int, payload: ProductoUpdate, db: Session = Depends(get_db)):
-    exists = db.execute(select(Producto).where(Producto.id == id)).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
+@app.delete("/DeleteProducto")
+async def delete_producto(id: int):
+    db = SessionLocal()
+    try:
+        stmt = delete(Producto).where(Producto.id == id).returning(Producto)
+        result = db.execute(stmt)
+        producto_eliminado = result.scalar_one_or_none()
 
-    db.execute(update(Producto).where(Producto.id == id).values(precio=payload.precio))
-    db.commit()
-    return {"IsSuccess": True, "message": "Producto actualizado"}
+        if producto_eliminado is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se encontro el producto"}
 
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a eliminado el producto", "data": producto_eliminado}
 
-@app.delete("/productos/{id}")
-def delete_producto(id: int, db: Session = Depends(get_db)):
-    db.execute(delete(Inventario).where(Inventario.id_producto == id))
-    result = db.execute(delete(Producto).where(Producto.id == id))
-    db.commit()
-
-    if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-
-    return {"IsSuccess": True, "message": "Producto eliminado"}
-
-
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
 # -----------------------------
 # CRUD INVENTARIO
 # -----------------------------
