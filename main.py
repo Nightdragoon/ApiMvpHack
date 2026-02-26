@@ -11,7 +11,8 @@ from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker
 from starlette.responses import JSONResponse
 from datetime import date
-
+from Dtos.CrearProductoDto import CrearProductoDto
+from Dtos.UpdateCrearProductoDto import UpdateProductoDto
 from Dtos import UpdateCajaDto
 from Dtos.EmpleadoDto import EmpleadoDto
 from Dtos.UpdateEmpleadoDto import UpdateEmpleadoDto
@@ -99,9 +100,9 @@ def root():
 async def get_producto(id: Optional[int] = Query(default=None)):
     db = SessionLocal()
     try:
-        stmt = select(Base.classes.Producto)
+        stmt = select(Producto)
         if id is not None:
-            stmt = stmt.where(Base.classes.Producto.id == id)
+            stmt = stmt.where(Producto.id == id)
 
         result = db.execute(stmt)
 
@@ -128,8 +129,7 @@ async def get_producto(id: Optional[int] = Query(default=None)):
 async def post_producto(producto: CrearProductoDto):
     db = SessionLocal()
     try:
-        values_dict = {PRODUCTO_PRECIO_COL: producto.precio}
-        stmt = insert(Producto).values(**values_dict).returning(Producto)
+        stmt = insert(Producto).values(double = producto.precio).returning(Producto)
         result = db.execute(stmt)
         producto_creado = result.scalar_one_or_none()
 
@@ -151,11 +151,10 @@ async def post_producto(producto: CrearProductoDto):
 async def update_producto(producto: UpdateProductoDto):
     db = SessionLocal()
     try:
-        values_dict = {PRODUCTO_PRECIO_COL: producto.precio}
         stmt = (
             update(Producto)
             .where(Producto.id == producto.id)
-            .values(**values_dict)
+            .values(double = producto.precio)
             .returning(Producto)
         )
         result = db.execute(stmt)
