@@ -1,3 +1,8 @@
+from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import create_engine, select, insert, update, delete
+from sqlalchemy.ext.automap import automap_base
+from sqlalchemy.orm import sessionmaker, Session
 from fastapi import FastAPI , Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.params import Query
@@ -6,7 +11,8 @@ from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker
 from starlette.responses import JSONResponse
 from datetime import date
-
+from Dtos.CrearProductoDto import CrearProductoDto
+from Dtos.UpdateCrearProductoDto import UpdateProductoDto
 from Dtos import UpdateCajaDto
 from Dtos.EmpleadoDto import EmpleadoDto
 from Dtos.UpdateEmpleadoDto import UpdateEmpleadoDto
@@ -16,8 +22,7 @@ from typing import Optional
 engine = create_engine('sqlite:///./ProyectDb.db')
 
 Base = automap_base()
-
-Base.prepare(engine , reflect=True)
+Base.prepare(autoload_with=engine)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -36,19 +41,16 @@ async def validation_handler(request: Request, exc: RequestValidationError):
         },
     )
 
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
+Producto = Base.classes.Producto
+Inventario = Base.classes.Inventario
+
+app = FastAPI(title="CRUD Producto & Inventario")
 
 
-@app.get("/hello/{name}")
-async def say_hello(name: str):
-    return {"message": f"Hello {name}"}
-
-@app.get("/GetEmpleados")
-async def get_empleados(id:int):
+def get_db():
     db = SessionLocal()
     try:
+        yield db
         stmt = select(Base.classes.Empleados).where(Base.classes.Empleados.id == id)
         result = db.execute(stmt)
         empleado = result.scalar_one_or_none()
@@ -62,6 +64,208 @@ async def get_empleados(id:int):
         db.close()
 
 
+class ProductoCreate(BaseModel):
+    precio: float = Field(ge=0)
+
+
+class ProductoUpdate(BaseModel):
+    precio: float = Field(ge=0)
+
+
+class InventarioCreate(BaseModel):
+    cantidad: int = Field(ge=0)
+
+
+class InventarioSet(BaseModel):
+    cantidad: int = Field(ge=0)
+
+
+class InventarioDelta(BaseModel):
+    delta: int
+
+
+def row_to_dict(obj):
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+
+@app.get("/")
+def root():
+    return {"message": "API OK. Ve a /docs para probar el CRUD."}
+
+
+# -----------------------------
+# CRUD PRODUCTO
+# -----------------------------
+@app.get("/GetProducto")
+async def get_producto(id: Optional[int] = Query(default=None)):
+    db = SessionLocal()
+    try:
+        stmt = select(Producto)
+        if id is not None:
+            stmt = stmt.where(Producto.id == id)
+
+        result = db.execute(stmt)
+
+        if id is not None:
+            producto = result.scalar_one_or_none()
+            result.close()
+            if producto is None:
+                return {"IsSuccess": False, "message": "no se a encontrado el producto"}
+            return {"IsSuccess": True, "message": "se a encontrado el producto", "data": producto}
+
+        productos = result.scalars().all()
+        result.close()
+        if not productos:
+            return {"IsSuccess": False, "message": "no se a encontrado ningun producto"}
+        return {"IsSuccess": True, "message": "se a encontrado productos", "data": productos}
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+
+@app.post("/PostProducto")
+async def post_producto(producto: CrearProductoDto):
+    db = SessionLocal()
+    try:
+        stmt = insert(Producto).values(double = producto.precio).returning(Producto)
+        result = db.execute(stmt)
+        producto_creado = result.scalar_one_or_none()
+
+        if producto_creado is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se pudo crear el producto"}
+
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a creado el producto", "data": producto_creado}
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+
+@app.put("/UpdateProducto")
+async def update_producto(producto: UpdateProductoDto):
+    db = SessionLocal()
+    try:
+        stmt = (
+            update(Producto)
+            .where(Producto.id == producto.id)
+            .values(double = producto.precio)
+            .returning(Producto)
+        )
+        result = db.execute(stmt)
+        producto_actualizado = result.scalar_one_or_none()
+
+        if producto_actualizado is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se encontro el producto"}
+
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a actualizado el producto", "data": producto_actualizado}
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+
+@app.delete("/DeleteProducto")
+async def delete_producto(id: int):
+    db = SessionLocal()
+    try:
+        stmt = delete(Producto).where(Producto.id == id).returning(Producto)
+        result = db.execute(stmt)
+        producto_eliminado = result.scalar_one_or_none()
+
+        if producto_eliminado is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se encontro el producto"}
+
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a eliminado el producto", "data": producto_eliminado}
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+# -----------------------------
+# CRUD INVENTARIO
+# -----------------------------
+@app.post("/productos/{id}/inventario")
+def create_inventario(id: int, payload: InventarioCreate, db: Session = Depends(get_db)):
+    try:
+        producto = db.execute(select(Producto).where(Producto.id == id)).scalar_one_or_none()
+        if producto is None:
+            raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+        inv = db.execute(select(Inventario).where(Inventario.id_producto == id)).scalar_one_or_none()
+        if inv is not None:
+            raise HTTPException(status_code=409, detail="Ya existe inventario para este producto")
+
+        db.execute(insert(Inventario).values(id_producto=id, cantidad=payload.cantidad))
+        db.commit()
+        return {"IsSuccess": True, "message": "Inventario creado"}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+
+@app.get("/productos/{id}/inventario")
+def get_inventario(id: int, db: Session = Depends(get_db)):
+    try:
+        inv = db.execute(select(Inventario).where(Inventario.id_producto == id)).scalar_one_or_none()
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Inventario no encontrado para este producto")
+        return {"IsSuccess": True, "data": row_to_dict(inv)}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+
+@app.put("/productos/{id}/inventario")
+def set_inventario(id: int, payload: InventarioSet, db: Session = Depends(get_db)):
+    try:
+        inv = db.execute(select(Inventario).where(Inventario.id_producto == id)).scalar_one_or_none()
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Inventario no encontrado para este producto")
+
+        db.execute(update(Inventario).where(Inventario.id_producto == id).values(cantidad=payload.cantidad))
+        db.commit()
+        return {"IsSuccess": True, "message": "Inventario actualizado"}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+
+@app.patch("/productos/{id}/inventario")
+def adjust_inventario(id: int, payload: InventarioDelta, db: Session = Depends(get_db)):
+   try:
+       inv = db.execute(select(Inventario).where(Inventario.id_producto == id)).scalar_one_or_none()
+       if inv is None:
+           raise HTTPException(status_code=404, detail="Inventario no encontrado para este producto")
+
+       nueva = int(inv.cantidad) + int(payload.delta)
+       if nueva < 0:
+           raise HTTPException(status_code=400, detail="No puedes dejar inventario en negativo")
+
+       db.execute(update(Inventario).where(Inventario.id_producto == id).values(cantidad=nueva))
+       db.commit()
+       return {"IsSuccess": True, "message": "Inventario ajustado", "cantidad": nueva}
+   except Exception as e:
+       return {"IsSuccess": False, "message": str(e)}
+   finally:
+       db.close()
+
+#crud empleados
 @app.post("/PostEmpleados")
 async def post_empleados(empleado: EmpleadoDto):
     db = SessionLocal()
@@ -79,7 +283,7 @@ async def post_empleados(empleado: EmpleadoDto):
         return {"IsSuccess": False, "message": str(e)}
     finally:
         db.close()
-
+#crud empleado
 @app.put("/UpdateEmpleado")
 async def update_empleado(empleado: UpdateEmpleadoDto):
     db = SessionLocal()
