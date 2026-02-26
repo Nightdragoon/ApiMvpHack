@@ -20,6 +20,8 @@ from Dtos.UpdateEmpleadoDto import UpdateEmpleadoDto
 from Dtos.CrearCajaDto import CrearCajaDto
 from Dtos.UpdateCajaDto import UpdateCajaDto
 from typing import Optional
+from sqlalchemy import func
+from calendar import monthrange
 engine = create_engine('sqlite:///./ProyectDb.db')
 
 Base = automap_base()
@@ -423,6 +425,56 @@ async def login(login: LoginDto):
         if log is None:
             return {"IsSuccess": False, "message": "no esta registrado comuniquese con un administrador "}
         return {"IsSuccess": True, "message": "login suceeded", "data": log}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+
+# INGRESOS DEL MES 
+@app.get("/reportes/ingresos-mensuales")
+def ingresos_mensuales(
+    year: int = Query(..., ge=2000),
+    month: int = Query(..., ge=1, le=12),
+    top: int = Query(10, ge=1, le=50),
+):
+    db = SessionLocal()
+    try:
+        last_day = monthrange(year, month)[1]
+        inicio = date(year, month, 1)
+        fin = date(year, month, last_day)
+
+        total_stmt = (
+            select(func.coalesce(func.sum(Producto.double), 0.0))
+            .select_from(Caja)
+            .join(Producto, Producto.id == Caja.idf_producto)
+            .where(Caja.dia >= inicio, Caja.dia <= fin)
+        )
+        ingresos_mes = float(db.execute(total_stmt).scalar_one())
+
+        top_stmt = (
+            select(
+                Producto.id.label("id_producto"),
+                Producto.double.label("precio"),
+                func.count(Caja.id).label("ventas"),
+                func.coalesce(func.sum(Producto.double), 0.0).label("ingresos"),
+            )
+            .select_from(Caja)
+            .join(Producto, Producto.id == Caja.idf_producto)
+            .where(Caja.dia >= inicio, Caja.dia <= fin)
+            .group_by(Producto.id, Producto.double)
+            .order_by(func.sum(Producto.double).desc())
+            .limit(top)
+        )
+        top_productos = [dict(r._mapping) for r in db.execute(top_stmt).all()]
+
+        return {
+            "IsSuccess": True,
+            "periodo": {"inicio": str(inicio), "fin": str(fin)},
+            "ingresos_mes": ingresos_mes,
+            "top_productos": top_productos,
+            "nota": "Ingresos calculados asumiendo 1 unidad por registro en Caja.",
+        }
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
     finally:
