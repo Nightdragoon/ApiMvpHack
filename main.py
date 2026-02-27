@@ -66,19 +66,19 @@ def get_db():
 
 
 class ProductoCreate(BaseModel):
-    precio: float = Field(ge=0)
+    precio: float = Field(ge=1)
 
 
 class ProductoUpdate(BaseModel):
-    precio: float = Field(ge=0)
+    precio: float = Field(ge=1)
 
 
 class InventarioCreate(BaseModel):
-    cantidad: int = Field(ge=0)
+    cantidad: int = Field(ge=1)
 
 
 class InventarioSet(BaseModel):
-    cantidad: int = Field(ge=0)
+    cantidad: int = Field(ge=1)
 
 
 class InventarioDelta(BaseModel):
@@ -285,6 +285,20 @@ def adjust_inventario(id: int, payload: InventarioDelta, db: Session = Depends(g
    finally:
        db.close()
 
+@app.get("/getAllInventario", tags=["inventario"])
+def get_all_inventario():
+    db = SessionLocal()
+    try:
+        stmt = select(Inventario)
+        result = db.execute(stmt).scalars().all()
+        if len(result) == 0:
+            return {"IsSuccess": False, "message": "No hay nada en inventario"}
+        return {"IsSuccess": True, "message" : "inventario obtenido",  "data": result}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
 #crud empleados
 @app.post("/PostEmpleados", tags=["empleados"])
 async def post_empleados(empleado: EmpleadoDto):
@@ -436,6 +450,20 @@ async def delete_caja(id: int):
         result.close()
         db.commit()
         return {"IsSuccess": True, "message": "se a eliminado la caja", "data": caja_eliminada}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+@app.get("/GetAllCaja", tags=["Caja"])
+async def get_all_caja():
+    db = SessionLocal()
+    try:
+        stmt = select(Caja).order_by(Caja.id)
+        result = db.execute(stmt).scalars().all()
+        if len(result) == 0:
+            return {"IsSuccess": False, "message": "no se encontro la caja"}
+        return {"IsSuccess": True,"message": "todas las ventas" ,  "data": result}
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
     finally:
