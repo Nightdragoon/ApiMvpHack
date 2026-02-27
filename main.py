@@ -399,7 +399,7 @@ async def post_caja(caja: CrearCajaDto):
         if checking is None:
             return {"IsSuccess": False, "message": "no hay registro del producto"}
         no_inventario = select(Inventario.cantidad).where(Inventario.id_producto == caja.idf_producto).where(Inventario.cantidad > 0)
-        result_no_inventario = db.execute(no_inventario)
+        result_no_inventario = db.execute(no_inventario).scalar_one_or_none()
         if result_no_inventario is None:
             return {"IsSuccess": False , "message": "no hay registro del producto en el inventario"}
         stmt = insert(Caja).values(idf_producto = caja.idf_producto , idf_empleado = caja.idf_empleado , dia = caja.dia).returning(Caja)
@@ -407,10 +407,10 @@ async def post_caja(caja: CrearCajaDto):
         caja_creada = result.scalar_one_or_none()
         if caja_creada is None:
             result.close()
-            return {"IsSuccess": False, "message": "no se pudo crear la caja"}
+            return {"IsSuccess": False, "message": "no se pudo hacer la caja"}
         result.close()
         db.commit()
-        return {"IsSuccess": True, "message" : "se a creado la caja" , "data": caja_creada}
+        return {"IsSuccess": True, "message" : "se a hecho la venta" , "data": caja_creada}
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
     finally:
@@ -505,7 +505,7 @@ async def obtenerPerdida():
         productos = result.all()
         if len(productos) == 0:
             return {"IsSuccess": False, "message": "no se encontrado la producto"}
-        lista_ganancias_mes = [r.vendidos * r.stock for r in productos]
+        lista_ganancias_mes = [r.vendidos * r.precio for r in productos]
         lista_perdidas_mes = [r.precio * r.stock for r in productos]
         ganancias_totales = sum(lista_ganancias_mes)
         perdidas_totales = sum(lista_perdidas_mes)
