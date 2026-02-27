@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import create_engine, select, insert, update, delete, Select
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import FastAPI , Request
@@ -96,6 +97,23 @@ def root():
 # -----------------------------
 # CRUD PRODUCTO
 # -----------------------------
+
+@app.get("/GetAllProductos")
+async def GetAllProductos():
+    db = SessionLocal()
+    try:
+        stmt = Select(Producto)
+        result = db.execute(stmt).scalars().all()
+        if(len(result) == 0):
+            return {"IsSuccess" : False , "message" : "No tienes productos"}
+
+        return { "IsSuccess" : True, "message" : "Productos obtenidos" , "data": result }
+
+    except Exception as e:
+        return {"IsSuccess" : False, "message" : str(e)}
+
+    finally:
+        db.close()
 @app.get("/GetProducto")
 async def get_producto(id: Optional[int] = Query(default=None)):
     db = SessionLocal()
@@ -129,7 +147,7 @@ async def get_producto(id: Optional[int] = Query(default=None)):
 async def post_producto(producto: CrearProductoDto):
     db = SessionLocal()
     try:
-        stmt = insert(Producto).values(double = producto.precio).returning(Producto)
+        stmt = insert(Producto).values(precio = producto.precio).returning(Producto)
         result = db.execute(stmt)
         producto_creado = result.scalar_one_or_none()
 
@@ -154,7 +172,7 @@ async def update_producto(producto: UpdateProductoDto):
         stmt = (
             update(Producto)
             .where(Producto.id == producto.id)
-            .values(double = producto.precio)
+            .values(precio = producto.precio)
             .returning(Producto)
         )
         result = db.execute(stmt)
@@ -361,11 +379,15 @@ async def get_caja(fecha_inicial: Optional[date] = Query(default=None), fecha_fi
 async def post_caja(caja: CrearCajaDto):
     db = SessionLocal()
     try:
-        checkExiste = select(Producto).where(Producto.id == caja.idf_producto)
-        existencia = db.execute(checkExiste)
-        existencia_result = existencia.scalar_one_or_none()
-        if existencia_result is None:
-            return {"IsSuccess": False, "message": "el producto no tiene inventario"}
+        check = select(Producto).where(Producto.id == caja.idf_producto)
+        result_check = db.execute(check)
+        checking = result_check.scalar_one_or_none()
+        if checking is None:
+            return {"IsSuccess": False, "message": "no hay registro del producto"}
+        no_inventario = select(Inventario.cantidad).where(Inventario.id_producto == caja.idf_producto).where(Inventario.cantidad > 0)
+        result_no_inventario = db.execute(no_inventario)
+        if result_no_inventario is None:
+            return {"IsSuccess": False , "message": "no hay registro del producto en el inventario"}
         stmt = insert(Caja).values(idf_producto = caja.idf_producto , idf_empleado = caja.idf_empleado , dia = caja.dia).returning(Caja)
         result = db.execute(stmt)
         caja_creada = result.scalar_one_or_none()
