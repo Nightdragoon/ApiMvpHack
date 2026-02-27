@@ -98,11 +98,13 @@ def root():
 # CRUD PRODUCTO
 # -----------------------------
 
-@app.get("/GetAllProductos")
-async def GetAllProductos():
+@app.get("/GetAllProductos", tags=["productos"])
+async def GetAllProductos(solo_activos: bool = False):
     db = SessionLocal()
     try:
         stmt = Select(Producto)
+        if solo_activos:
+            stmt = stmt.where(Producto.activo  == 1)
         result = db.execute(stmt).scalars().all()
         if(len(result) == 0):
             return {"IsSuccess" : False , "message" : "No tienes productos"}
@@ -114,7 +116,7 @@ async def GetAllProductos():
 
     finally:
         db.close()
-@app.get("/GetProducto")
+@app.get("/GetProducto" , tags=["productos"])
 async def get_producto(id: Optional[int] = Query(default=None)):
     db = SessionLocal()
     try:
@@ -143,11 +145,11 @@ async def get_producto(id: Optional[int] = Query(default=None)):
         db.close()
 
 
-@app.post("/PostProducto")
+@app.post("/PostProducto" , tags=["productos"])
 async def post_producto(producto: CrearProductoDto):
     db = SessionLocal()
     try:
-        stmt = insert(Producto).values(precio = producto.precio).returning(Producto)
+        stmt = insert(Producto).values(precio = producto.precio , nombre = producto.nombre , activo = producto.activo).returning(Producto)
         result = db.execute(stmt)
         producto_creado = result.scalar_one_or_none()
 
@@ -165,14 +167,14 @@ async def post_producto(producto: CrearProductoDto):
         db.close()
 
 
-@app.put("/UpdateProducto")
+@app.put("/UpdateProducto" , tags=["productos"])
 async def update_producto(producto: UpdateProductoDto):
     db = SessionLocal()
     try:
         stmt = (
             update(Producto)
             .where(Producto.id == producto.id)
-            .values(precio = producto.precio)
+            .values(precio = producto.precio , nombre = producto.nombre , activo = producto.activo)
             .returning(Producto)
         )
         result = db.execute(stmt)
@@ -192,7 +194,7 @@ async def update_producto(producto: UpdateProductoDto):
         db.close()
 
 
-@app.delete("/DeleteProducto")
+@app.delete("/DeleteProducto" , tags=["productos"])
 async def delete_producto(id: int):
     db = SessionLocal()
     try:
@@ -215,7 +217,7 @@ async def delete_producto(id: int):
 # -----------------------------
 # CRUD INVENTARIO
 # -----------------------------
-@app.post("/productos/{id}/inventario")
+@app.post("/productos/{id}/inventario", tags=["inventario"])
 def create_inventario(id: int, payload: InventarioCreate, db: Session = Depends(get_db)):
     try:
         producto = db.execute(select(Producto).where(Producto.id == id)).scalar_one_or_none()
@@ -235,7 +237,7 @@ def create_inventario(id: int, payload: InventarioCreate, db: Session = Depends(
         db.close()
 
 
-@app.get("/productos/{id}/inventario")
+@app.get("/productos/{id}/inventario", tags=["inventario"])
 def get_inventario(id: int, db: Session = Depends(get_db)):
     try:
         inv = db.execute(select(Inventario).where(Inventario.id_producto == id)).scalar_one_or_none()
@@ -248,7 +250,7 @@ def get_inventario(id: int, db: Session = Depends(get_db)):
         db.close()
 
 
-@app.put("/productos/{id}/inventario")
+@app.put("/productos/{id}/inventario", tags=["inventario"])
 def set_inventario(id: int, payload: InventarioSet, db: Session = Depends(get_db)):
     try:
         inv = db.execute(select(Inventario).where(Inventario.id_producto == id)).scalar_one_or_none()
@@ -264,7 +266,7 @@ def set_inventario(id: int, payload: InventarioSet, db: Session = Depends(get_db
         db.close()
 
 
-@app.patch("/productos/{id}/inventario")
+@app.patch("/productos/{id}/inventario", tags=["inventario"])
 def adjust_inventario(id: int, payload: InventarioDelta, db: Session = Depends(get_db)):
    try:
        inv = db.execute(select(Inventario).where(Inventario.id_producto == id)).scalar_one_or_none()
@@ -284,7 +286,7 @@ def adjust_inventario(id: int, payload: InventarioDelta, db: Session = Depends(g
        db.close()
 
 #crud empleados
-@app.post("/PostEmpleados")
+@app.post("/PostEmpleados", tags=["empleados"])
 async def post_empleados(empleado: EmpleadoDto):
     db = SessionLocal()
     try:
@@ -302,7 +304,7 @@ async def post_empleados(empleado: EmpleadoDto):
     finally:
         db.close()
 #crud empleado
-@app.put("/UpdateEmpleado")
+@app.put("/UpdateEmpleado", tags=["empleados"])
 async def update_empleado(empleado: UpdateEmpleadoDto):
     db = SessionLocal()
     try:
@@ -321,7 +323,7 @@ async def update_empleado(empleado: UpdateEmpleadoDto):
         db.close()
 
 
-@app.delete("/DeleteEmpleado")
+@app.delete("/DeleteEmpleado", tags=["empleados"])
 async def delete_empleado(id: int):
     db = SessionLocal()
     try:
@@ -339,7 +341,7 @@ async def delete_empleado(id: int):
     finally:
         db.close()
 
-@app.get("/GetAllEmpleados")
+@app.get("/GetAllEmpleados", tags=["empleados"])
 async def get_all_empleados():
     db = SessionLocal()
     try:
@@ -355,7 +357,7 @@ async def get_all_empleados():
         db.close()
 
 #crud caja
-@app.get("/GetCaja")
+@app.get("/GetCaja", tags=["Caja"])
 async def get_caja(fecha_inicial: Optional[date] = Query(default=None), fecha_final: Optional[date] = Query(default=None)):
     db = SessionLocal()
     try:
@@ -375,7 +377,7 @@ async def get_caja(fecha_inicial: Optional[date] = Query(default=None), fecha_fi
     finally:
         db.close()
 
-@app.post("/PostCaja")
+@app.post("/PostCaja", tags=["Caja"])
 async def post_caja(caja: CrearCajaDto):
     db = SessionLocal()
     try:
@@ -402,7 +404,7 @@ async def post_caja(caja: CrearCajaDto):
     finally:
         db.close()
 
-@app.put("/UpdateCaja")
+@app.put("/UpdateCaja", tags=["Caja"])
 async def update_caja(caja: UpdateCajaDto):
     db = SessionLocal()
     try:
@@ -421,7 +423,7 @@ async def update_caja(caja: UpdateCajaDto):
         db.close()
 
 
-@app.delete("/DeleteCaja")
+@app.delete("/DeleteCaja", tags=["Caja"])
 async def delete_caja(id: int):
     db = SessionLocal()
     try:
@@ -439,7 +441,7 @@ async def delete_caja(id: int):
     finally:
         db.close()
 
-@app.post("/login")
+@app.post("/login" , tags=["login"])
 async def login(login: LoginDto):
     db = SessionLocal()
     try:
@@ -454,7 +456,7 @@ async def login(login: LoginDto):
     finally:
         db.close()
 
-@app.get("/Obtencion_ganancias_baundrate")
+@app.get("/Obtencion_ganancias_baundrate" , tags=["Baundrate"])
 async def obtenerPerdida():
     db = SessionLocal()
     try:
@@ -462,7 +464,7 @@ async def obtenerPerdida():
         stmt = (
             select(
                 Producto.id.label("producto_id"),
-                Producto.double.label("precio"),  # cambia si tu columna se llama distinto
+                Producto.precio.label("precio"),  # cambia si tu columna se llama distinto
                 func.count(Caja.id).label("vendidos"),  # cuántas veces aparece en Caja
                 Inventario.cantidad.label("stock")  # cambia si se llama stock/existencia/cantidad
             )
@@ -470,7 +472,7 @@ async def obtenerPerdida():
             .join(Producto, Producto.id == Caja.idf_producto)
             .outerjoin(Inventario, Inventario.id_producto == Producto.id)
             .where(Caja.dia >= mes)
-            .group_by(Producto.id, Producto.double, Inventario.cantidad)
+            .group_by(Producto.id, Producto.precio, Inventario.cantidad)
             .order_by(func.count(Caja.id).desc())
         )
         result = db.execute(stmt)
