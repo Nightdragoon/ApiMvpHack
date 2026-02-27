@@ -3,3 +3,4 @@ fastapi
 sqlalchemy
 pydantic
 starlette
+sqlite3

@@ -482,7 +482,7 @@ async def login(login: LoginDto):
     finally:
         db.close()
 
-@app.get("/Obtencion_ganancias_baundrate" , tags=["Burnrate"])
+@app.get("/Obtencion_ganancias_burnrate" , tags=["Burnrate"])
 async def obtenerPerdida():
     db = SessionLocal()
     try:
