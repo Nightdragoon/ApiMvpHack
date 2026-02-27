@@ -361,6 +361,11 @@ async def get_caja(fecha_inicial: Optional[date] = Query(default=None), fecha_fi
 async def post_caja(caja: CrearCajaDto):
     db = SessionLocal()
     try:
+        checkExiste = select(Producto).where(Producto.id == caja.idf_producto)
+        existencia = db.execute(checkExiste)
+        existencia_result = existencia.scalar_one_or_none()
+        if existencia_result is None:
+            return {"IsSuccess": False, "message": "el producto no tiene inventario"}
         stmt = insert(Caja).values(idf_producto = caja.idf_producto , idf_empleado = caja.idf_empleado , dia = caja.dia).returning(Caja)
         result = db.execute(stmt)
         caja_creada = result.scalar_one_or_none()
@@ -427,7 +432,7 @@ async def login(login: LoginDto):
     finally:
         db.close()
 
-@app.get("/ObtenerPerdida")
+@app.get("/Obtencion_ganancias_baundrate")
 async def obtenerPerdida():
     db = SessionLocal()
     try:
@@ -450,6 +455,10 @@ async def obtenerPerdida():
         productos = result.all()
         if len(productos) == 0:
             return {"IsSuccess": False, "message": "no se encontrado la producto"}
+        lista_ganancias_mes = [r.vendidos * r.stock for r in productos]
+        lista_perdidas_mes = [r.precio * r.stock for r in productos]
+        ganancias_totales = sum(lista_ganancias_mes)
+        perdidas_totales = sum(lista_perdidas_mes)
         data = [
             {
                 "producto_id": r.producto_id,
@@ -462,10 +471,10 @@ async def obtenerPerdida():
             }
             for r in productos
         ]
-        return {"IsSuccess": False, "message": "se a encontrado la producto" , "data": data}
-        precios_mes = list(map(lambda x: x.precio, productos))
 
-        gananciasTotales = sum(precios_mes)
+        runway = ganancias_totales / perdidas_totales
+        return {"IsSuccess": True, "message": "se a encontrado la producto" , "data": data , "ganancias_mes_totales" : ganancias_totales ,"perdida_mes_totales" : perdidas_totales , "runway" : runway}
+
         #de un producto sacarle su venta del mes y su inventario y multiplicarlo por su precio
 
 
