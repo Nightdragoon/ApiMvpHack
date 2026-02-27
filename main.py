@@ -408,9 +408,16 @@ async def post_caja(caja: CrearCajaDto):
         if caja_creada is None:
             result.close()
             return {"IsSuccess": False, "message": "no se pudo hacer la caja"}
+        stmtRestar = update(Inventario).where(Inventario.id_producto == caja.idf_producto).values(cantidad = Inventario.cantidad - 1)
+        resta = db.execute(stmtRestar)
+        db.commit()
+        if resta.rowcount == 0:
+            return {"IsSuccess": False, "message": "se hizo la venta pero no se modifico ex stock"}
+
+
         result.close()
         db.commit()
-        return {"IsSuccess": True, "message" : "se a hecho la venta" , "data": caja_creada}
+        return {"IsSuccess": True, "message" : "se a hecho la venta y modificado el stock" , "data": caja_creada}
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
     finally:
