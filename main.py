@@ -1,12 +1,11 @@
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, select, insert, update, delete
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import FastAPI , Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.params import Query
-from sqlalchemy import create_engine , select , update , delete , insert
+from sqlalchemy import create_engine , select , update , delete , insert , func
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker
 from starlette.responses import JSONResponse
@@ -348,8 +347,8 @@ async def get_caja(fecha_inicial: Optional[date] = Query(default=None), fecha_fi
         if fecha_final is not None:
             stmt = stmt.where(Base.classes.Caja.dia <= fecha_final)
         result = db.execute(stmt)
-        caja = result.scalar_one_or_none()
-        if caja is None:
+        caja = result.scalars().all()
+        if not caja:
             return {"IsSuccess": False, "message": "no se a encontrado la venta"}
         result.close()
         return {"IsSuccess": True, "message" : "se a encontrado la venta" , "data": caja}
@@ -362,6 +361,11 @@ async def get_caja(fecha_inicial: Optional[date] = Query(default=None), fecha_fi
 async def post_caja(caja: CrearCajaDto):
     db = SessionLocal()
     try:
+        checkExiste = select(Producto).where(Producto.id == caja.idf_producto)
+        existencia = db.execute(checkExiste)
+        existencia_result = existencia.scalar_one_or_none()
+        if existencia_result is None:
+            return {"IsSuccess": False, "message": "el producto no tiene inventario"}
         stmt = insert(Caja).values(idf_producto = caja.idf_producto , idf_empleado = caja.idf_empleado , dia = caja.dia).returning(Caja)
         result = db.execute(stmt)
         caja_creada = result.scalar_one_or_none()
@@ -423,6 +427,58 @@ async def login(login: LoginDto):
         if log is None:
             return {"IsSuccess": False, "message": "no esta registrado comuniquese con un administrador "}
         return {"IsSuccess": True, "message": "login suceeded", "data": log}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+@app.get("/Obtencion_ganancias_baundrate")
+async def obtenerPerdida():
+    db = SessionLocal()
+    try:
+        mes = date.today().replace(day=1)
+        stmt = (
+            select(
+                Producto.id.label("producto_id"),
+                Producto.double.label("precio"),  # cambia si tu columna se llama distinto
+                func.count(Caja.id).label("vendidos"),  # cuántas veces aparece en Caja
+                Inventario.cantidad.label("stock")  # cambia si se llama stock/existencia/cantidad
+            )
+            .select_from(Caja)
+            .join(Producto, Producto.id == Caja.idf_producto)
+            .outerjoin(Inventario, Inventario.id_producto == Producto.id)
+            .where(Caja.dia >= mes)
+            .group_by(Producto.id, Producto.double, Inventario.cantidad)
+            .order_by(func.count(Caja.id).desc())
+        )
+        result = db.execute(stmt)
+        productos = result.all()
+        if len(productos) == 0:
+            return {"IsSuccess": False, "message": "no se encontrado la producto"}
+        lista_ganancias_mes = [r.vendidos * r.stock for r in productos]
+        lista_perdidas_mes = [r.precio * r.stock for r in productos]
+        ganancias_totales = sum(lista_ganancias_mes)
+        perdidas_totales = sum(lista_perdidas_mes)
+        data = [
+            {
+                "producto_id": r.producto_id,
+                "precio": r.precio,
+                "vendidos": r.vendidos,
+                "stock": r.stock,
+                "ganancia_mes": r.vendidos * r.precio,
+                "perdida_mes": r.precio * r.stock
+
+            }
+            for r in productos
+        ]
+
+        runway = ganancias_totales / perdidas_totales
+        return {"IsSuccess": True, "message": "se a encontrado la producto" , "data": data , "ganancias_mes_totales" : ganancias_totales ,"perdida_mes_totales" : perdidas_totales , "runway" : runway}
+
+        #de un producto sacarle su venta del mes y su inventario y multiplicarlo por su precio
+
+
+
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
     finally:
