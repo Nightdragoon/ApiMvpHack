@@ -1,7 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, select, insert, update, delete, Select
-from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import FastAPI , Request
 from fastapi.exceptions import RequestValidationError
@@ -102,7 +100,7 @@ def root():
 async def GetAllProductos(solo_activos: bool = False):
     db = SessionLocal()
     try:
-        stmt = Select(Producto)
+        stmt = select(Producto)
         if solo_activos:
             stmt = stmt.where(Producto.activo  == 1)
         result = db.execute(stmt).scalars().all()
