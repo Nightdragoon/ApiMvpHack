@@ -27,7 +27,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Empleado = Base.classes.Empleados
 Caja = Base.classes.Caja
-app = FastAPI()
+app = FastAPI(title="CRUD Producto & Inventario")
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request: Request, exc: RequestValidationError):
@@ -43,7 +43,6 @@ async def validation_handler(request: Request, exc: RequestValidationError):
 Producto = Base.classes.Producto
 Inventario = Base.classes.Inventario
 
-app = FastAPI(title="CRUD Producto & Inventario")
 
 #hola gustavo como esatas 
 
