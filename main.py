@@ -249,8 +249,13 @@ def get_inventario(id_producto: int, db: Session = Depends(get_db)):
 
 
 @app.put("/productos/{id_producto}/inventario", tags=["inventario"])
-def set_inventario(id_producto: int, payload: InventarioSet, db: Session = Depends(get_db)):
+def set_inventario(id_producto: int, payload: InventarioSet,):
+    db = SessionLocal()
     try:
+
+        if payload.cantidad <= 0:
+            return {"IsSuccess": False , "message": "cantidad no puede ser mayor que 0"}
+
         inv = db.execute(select(Inventario).where(Inventario.id_producto == id_producto)).scalar_one_or_none()
         if inv is None:
             raise HTTPException(status_code=404, detail="Inventario no encontrado para este producto")
