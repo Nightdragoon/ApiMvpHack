@@ -45,6 +45,7 @@ Inventario = Base.classes.Inventario
 
 app = FastAPI(title="CRUD Producto & Inventario")
 
+#hola gustavo como esatas 
 
 def get_db():
     db = SessionLocal()
