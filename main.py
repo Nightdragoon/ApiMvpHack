@@ -31,12 +31,15 @@ app = FastAPI(title="CRUD Producto & Inventario")
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request: Request, exc: RequestValidationError):
+    message = ""
+    errores = exc.errors()
+    for error in errores:
+        message = message + f"\n{error["msg"]}"
     return JSONResponse(
         status_code=200,
         content={
             "IsSuccess": False,
-            "message": "Validación falló",
-            "data": exc.errors(),   # aquí vienen los fields faltantes y por qué
+            "message": message,
         },
     )
 
