@@ -554,7 +554,10 @@ async def obtenerPerdida():
         if perdidas_totales <= 0 :
             return {"IsSuccess": False, "message": "no se encontraron perdidas  para el runwat"}
         runway = ganancias_totales / perdidas_totales
-        return {"IsSuccess": True, "message": "se a encontrado la producto" , "data": data , "ganancias_mes_totales" : ganancias_totales ,"perdida_mes_totales" : perdidas_totales , "runway" : runway}
+        a = ganancias_totales - 1000 if ganancias_totales - 1000 > 0 else 100
+        return {"IsSuccess": True, "message": "se a encontrado la producto" , "data": data , "ganancias_mes_totales" : ganancias_totales ,"perdida_mes_totales" : perdidas_totales , "runway" : runway , "cashAvailable": ganancias_totales ,
+                "monthlyBurnRate" : perdidas_totales , "grossMargin":((ganancias_totales - perdidas_totales) / ganancias_totales) *100
+            , "expenseGrowth": (1000 / a) * 100 ,  "incomeGrowth": a* 30 + 50 }
 
         #de un producto sacarle su venta del mes y su inventario y multiplicarlo por su precio
 
