@@ -32,7 +32,7 @@ app = FastAPI(title="CRUD Producto & Inventario")
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
-        status_code=422,
+        status_code=200,
         content={
             "IsSuccess": False,
             "message": "Validación falló",
