@@ -284,7 +284,7 @@ def adjust_inventario(id_producto: int, payload: InventarioDelta, db: Session = 
        db.close()
 
 @app.get("/getAllInventario", tags=["inventario"])
-def get_all_inventario():
+async def get_all_inventario():
     db = SessionLocal()
     try:
         stmt = select(Inventario)
@@ -511,16 +511,16 @@ async def obtenerPerdida():
         result = db.execute(stmt)
         productos = result.all()
         if len(productos) == 0:
-            result_cajas = get_all_caja()
+            result_cajas = await get_all_caja()
             if not result_cajas["IsSuccess"]:
                 return {"IsSuccess": False, "message": "no hay ventas registradas para el runway"}
-            result_inventario =  get_all_inventario()
+            result_inventario = await get_all_inventario()
             if not result_inventario["IsSuccess"]:
                 return { "IsSuccess": False,"message": "no hay inventario registrado para el runway"}
-            result_empleados = get_all_empleados()
+            result_empleados = await get_all_empleados()
             if result_empleados["IsSuccess"]== False:
                 return {"IsSuccess": False , "message": "no hay empleado registrado para el runway"}
-            result_productos = GetAllProductos()
+            result_productos = await GetAllProductos()
             if result_productos["IsSuccess"] == False:
                 return {"IsSuccess": False , "message": "no hay productos registrado para el runway"}
             stmt_ventas = select(Caja).join(Empleado ,  Caja.idf_empleado ==  Empleado.id )
