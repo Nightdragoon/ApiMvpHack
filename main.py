@@ -511,6 +511,27 @@ async def obtenerPerdida():
         result = db.execute(stmt)
         productos = result.all()
         if len(productos) == 0:
+            result_cajas = get_all_caja()
+            if not result_cajas["IsSuccess"]:
+                return {"IsSuccess": False, "message": "no hay ventas registradas para el runway"}
+            result_inventario =  get_all_inventario()
+            if not result_inventario["IsSuccess"]:
+                return { "IsSuccess": False,"message": "no hay inventario registrado para el runway"}
+            result_empleados = get_all_empleados()
+            if result_empleados["IsSuccess"]== False:
+                return {"IsSuccess": False , "message": "no hay empleado registrado para el runway"}
+            result_productos = GetAllProductos()
+            if result_productos["IsSuccess"] == False:
+                return {"IsSuccess": False , "message": "no hay productos registrado para el runway"}
+            stmt_ventas = select(Caja).join(Empleado ,  Caja.idf_empleado ==  Empleado.id )
+            result_ventas_con_empleado = db.execute(stmt_ventas).all()
+            if len(result_ventas_con_empleado) == 0:
+                return {"IsSuccess": False, "message": "no hay ventas registradas con empleados activos borra las ventas del empleado inactivo"}
+
+
+
+
+
             return {"IsSuccess": False, "message": "No se puede calcular el runway.Se requieren empleados con ventas registradas, productos con stock disponible y al menos una venta registrada."}
         lista_ganancias_mes = [r.vendidos * r.precio for r in productos]
         lista_perdidas_mes = [r.precio * r.stock for r in productos]
