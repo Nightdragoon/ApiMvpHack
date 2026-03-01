@@ -18,6 +18,14 @@ from Dtos.UpdateEmpleadoDto import UpdateEmpleadoDto
 from Dtos.CrearCajaDto import CrearCajaDto
 from Dtos.UpdateCajaDto import UpdateCajaDto
 from typing import Optional
+from fastapi.responses import StreamingResponse
+from google import genai  # <--- Nueva forma de importarfrom dotenv import load_dotenv
+import os
+import io
+from dotenv import load_dotenv  # <--- ESTA ES LA LÍNEA QUE FALTABA
+
+load_dotenv(".env.local")
+cliente = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 engine = create_engine('sqlite:///./ProyectDb.db')
 
 Base = automap_base()
@@ -575,3 +583,46 @@ async def obtenerPerdida():
         return {"IsSuccess": False, "message": str(e)}
     finally:
         db.close()
+
+
+@app.get("/generar-reporte-ia" , tags=["ia"])
+async def generar_reporte():
+    try:
+        # 1. Obtenemos los datos de las diferentes fuentes
+        result_runway = await obtenerPerdida()
+        result_empleados = await get_all_empleados()
+        result_ventas = await get_all_caja()
+
+        # 2. Construimos el prompt con los datos obtenidos
+        prompt = (
+            f"Genera un reporte a partir de estos datos: "
+            f"Pérdida/Runway: {str(result_runway)}, "
+            f"Ventas/Caja: {str(result_ventas)}, "
+            f"Empleados: {str(result_empleados)}"
+        )
+
+        # 3. Llamada a la API de Gemini
+        # Nota: Asegúrate de que 'cliente' esté definido globalmente como vimos antes
+        response = cliente.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
+
+        contenido_ia = response.text
+
+        # 4. Preparación del archivo para descarga
+        buffer = io.BytesIO(contenido_ia.encode("utf-8"))
+
+        return StreamingResponse(
+            buffer,
+            media_type="text/plain",
+            headers={"Content-Disposition": "attachment; filename=reporte_negocio_ia.txt"}
+        )
+
+    except Exception as e:
+        # Captura cualquier error: desde un 429 (límite de cuota)
+        # hasta fallos de conexión o errores en las funciones async
+        return {
+            "IsSuccess": False,
+            "message": str(e)
+        }

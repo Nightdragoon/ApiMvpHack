@@ -3,3 +3,5 @@ fastapi
 sqlalchemy
 pydantic
 starlette
+google-genai
+python-dotenv
