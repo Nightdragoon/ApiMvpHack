@@ -528,9 +528,9 @@ async def obtenerPerdida():
             }
             for r in productos
         ]
-        if ganancias_totales == 0 :
+        if ganancias_totales <= 0 :
             return {"IsSuccess": False, "message": "no se encontraron ganancias para el runway"}
-        if perdidas_totales == 0 :
+        if perdidas_totales <= 0 :
             return {"IsSuccess": False, "message": "no se encontraron perdidas  para el runwat"}
         runway = ganancias_totales / perdidas_totales
         return {"IsSuccess": True, "message": "se a encontrado la producto" , "data": data , "ganancias_mes_totales" : ganancias_totales ,"perdida_mes_totales" : perdidas_totales , "runway" : runway}
