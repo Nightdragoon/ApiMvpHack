@@ -511,7 +511,7 @@ async def obtenerPerdida():
         result = db.execute(stmt)
         productos = result.all()
         if len(productos) == 0:
-            return {"IsSuccess": False, "message": "no no hay productos"}
+            return {"IsSuccess": False, "message": "No se puede calcular el runway.Se requieren empleados con ventas registradas, productos con stock disponible y al menos una venta registrada."}
         lista_ganancias_mes = [r.vendidos * r.precio for r in productos]
         lista_perdidas_mes = [r.precio * r.stock for r in productos]
         ganancias_totales = sum(lista_ganancias_mes)
