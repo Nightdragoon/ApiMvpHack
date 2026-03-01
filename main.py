@@ -511,7 +511,7 @@ async def obtenerPerdida():
         result = db.execute(stmt)
         productos = result.all()
         if len(productos) == 0:
-            return {"IsSuccess": False, "message": "no se encontrado la producto"}
+            return {"IsSuccess": False, "message": "no no hay productos"}
         lista_ganancias_mes = [r.vendidos * r.precio for r in productos]
         lista_perdidas_mes = [r.precio * r.stock for r in productos]
         ganancias_totales = sum(lista_ganancias_mes)
