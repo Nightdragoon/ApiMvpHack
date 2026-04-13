@@ -23,6 +23,11 @@ from google import genai  # <--- Nueva forma de importarfrom dotenv import load_
 import os
 import io
 from dotenv import load_dotenv  # <--- ESTA ES LA LÍNEA QUE FALTABA
+from Handlers.DeepSeekHandler import DeepSeekHandler
+from Handlers.ChatterboxHandler import ChatterboxHandler
+from Handlers.OllamaHandler import OllamaHandler
+from Handlers.ElevenLabsHandler import ElevenLabsHandler
+from fastapi.responses import FileResponse
 
 load_dotenv(".env.local")
 cliente = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -626,3 +631,55 @@ async def generar_reporte():
             "IsSuccess": False,
             "message": str(e)
         }
+    
+
+@app.get("/comunicarse_con_ia_noconexion" , tags=["ia"] )
+async def comunicarse_con_ia_noconexion(text: str):
+    try:
+        handler = OllamaHandler()
+        respuesta = handler.comunicarse_ia_no_conexion(text)
+        return {"IsSuccess": True, "message": respuesta}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
+@app.get("/hablar_con_ia" , tags=["ia"] )
+async def hablar_con_ia(text: str):
+    try:
+        handler = DeepSeekHandler()
+        respuesta = handler.comunicarse_ia(text)
+        handler_audio = ChatterboxHandler()
+        handler_audio.hablar(respuesta)
+        return FileResponse(            # ✅ devuelve el archivo de audio
+            path="c:/audios_fromai/test-spanish.wav",
+            media_type="audio/wav",
+            filename="test-spánish.wav"
+        )
+
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    
+@app.get("/generar_audio" , tags=["audio"])
+def generar_audio(text: str):
+    try:
+        handler_audio = ChatterboxHandler()
+        respuesta = handler_audio.hablar(text)
+        return {"IsSuccess": True, "message": respuesta}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
+@app.get("/hablar_con_ia_elevenlabs", tags=["ia"])
+async def hablar_con_ia_elevenlabs(text: str):
+    try:
+        handler_ia = DeepSeekHandler()
+        respuesta = handler_ia.comunicarse_ia(text)
+
+        handler_audio = ElevenLabsHandler()
+        ruta_audio = handler_audio.generar_audio(respuesta)
+
+        return FileResponse(
+            path=ruta_audio,
+            media_type="audio/mpeg",
+            filename="respuesta_ia.mp3"
+        )
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}

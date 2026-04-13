@@ -5,3 +5,8 @@ pydantic
 starlette
 google-genai
 python-dotenv
+torch
+chatterbox-tts
+openai
+ollama
+elevenlabs
