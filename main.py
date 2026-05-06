@@ -1,3 +1,5 @@
+import json
+
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import sessionmaker, Session
@@ -23,11 +25,14 @@ from google import genai  # <--- Nueva forma de importarfrom dotenv import load_
 import os
 import io
 from dotenv import load_dotenv  # <--- ESTA ES LA LÍNEA QUE FALTABA
+from Handlers.ArduinoHanlder import ArduinoHandler
 from Handlers.DeepSeekHandler import DeepSeekHandler
-from Handlers.ChatterboxHandler import ChatterboxHandler
-from Handlers.OllamaHandler import OllamaHandler
 from Handlers.ElevenLabsHandler import ElevenLabsHandler
 from fastapi.responses import FileResponse
+from Handlers.LangChainHandler import LangChainHandler
+from Handlers.DeepagentsHandler import DeepagentsHandler
+
+from Handlers.DeepagentsHandler import DeepagentsHandler
 
 load_dotenv(".env.local")
 cliente = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -633,39 +638,9 @@ async def generar_reporte():
         }
     
 
-@app.get("/comunicarse_con_ia_noconexion" , tags=["ia"] )
-async def comunicarse_con_ia_noconexion(text: str):
-    try:
-        handler = OllamaHandler()
-        respuesta = handler.comunicarse_ia_no_conexion(text)
-        return {"IsSuccess": True, "message": respuesta}
-    except Exception as e:
-        return {"IsSuccess": False, "message": str(e)}
 
-@app.get("/hablar_con_ia" , tags=["ia"] )
-async def hablar_con_ia(text: str):
-    try:
-        handler = DeepSeekHandler()
-        respuesta = handler.comunicarse_ia(text)
-        handler_audio = ChatterboxHandler()
-        handler_audio.hablar(respuesta)
-        return FileResponse(            # ✅ devuelve el archivo de audio
-            path="c:/audios_fromai/test-spanish.wav",
-            media_type="audio/wav",
-            filename="test-spánish.wav"
-        )
-
-    except Exception as e:
-        return {"IsSuccess": False, "message": str(e)}
     
-@app.get("/generar_audio" , tags=["audio"])
-def generar_audio(text: str):
-    try:
-        handler_audio = ChatterboxHandler()
-        respuesta = handler_audio.hablar(text)
-        return {"IsSuccess": True, "message": respuesta}
-    except Exception as e:
-        return {"IsSuccess": False, "message": str(e)}
+
 
 @app.get("/hablar_con_ia_elevenlabs", tags=["ia"])
 async def hablar_con_ia_elevenlabs(text: str):
@@ -673,13 +648,47 @@ async def hablar_con_ia_elevenlabs(text: str):
         handler_ia = DeepSeekHandler()
         respuesta = handler_ia.comunicarse_ia(text)
 
+        datos = json.loads(respuesta)
+        mensaje = datos["message"]
+        emotion = datos["emotion"]
+
+        arduino_handler = ArduinoHandler()
+        
+        arduino_handler.send_message(emotion)
+        arduino_handler.close()
         handler_audio = ElevenLabsHandler()
-        ruta_audio = handler_audio.generar_audio(respuesta)
+        ruta_audio = handler_audio.generar_audio(mensaje)
 
         return FileResponse(
             path=ruta_audio,
             media_type="audio/mpeg",
             filename="respuesta_ia.mp3"
+        )
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    
+@app.get("/hablar_con_ia_langchain", tags=["ia"])
+def hablar_lanchain(text: str):
+    handler_ia = LangChainHandler()
+    handler_ia.ingest_fromtxt()
+    respuesta = handler_ia.query(text)
+    return {"IsSuccess": True, "message": respuesta}
+
+
+
+
+@app.get("/deepagents", tags=["ia"])
+async def deepagents(text: str):
+    try:
+        handler = DeepagentsHandler()
+        mensaje = handler.run(text)
+   
+        handlers_audio = ElevenLabsHandler()
+        ruta_audio = handlers_audio.generar_audio(mensaje)
+        return FileResponse(
+            path=ruta_audio,
+            media_type="audio/mpeg",
+            filename="respuesta_deepagents.mp3"
         )
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
