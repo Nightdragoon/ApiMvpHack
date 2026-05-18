@@ -31,8 +31,7 @@ from Handlers.ElevenLabsHandler import ElevenLabsHandler
 from fastapi.responses import FileResponse
 from Handlers.LangChainHandler import LangChainHandler
 from Handlers.DeepagentsHandler import DeepagentsHandler
-
-from Handlers.DeepagentsHandler import DeepagentsHandler
+from Handlers.TelegramHandler import process_update, get_bot_info
 
 load_dotenv(".env.local")
 cliente = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -305,9 +304,57 @@ def adjust_inventario(id_producto: int, payload: InventarioDelta, db: Session = 
        db.commit()
        return {"IsSuccess": True, "message": "Inventario ajustado", "cantidad": nueva}
    except Exception as e:
-       return {"IsSuccess": False, "message": str(e)}
-   finally:
-       db.close()
+        return {"IsSuccess": False, "message": str(e)}
+
+
+# -----------------------------
+# TELEGRAM BOT
+# -----------------------------
+class TelegramUpdate(BaseModel):
+    update_id: int
+    message: Optional[dict] = None
+    edited_message: Optional[dict] = None
+    callback_query: Optional[dict] = None
+
+
+@app.post("/telegram-webhook", tags=["telegram"])
+async def telegram_webhook(update: TelegramUpdate):
+    try:
+        data = update.model_dump(exclude_none=True)
+        result = await process_update(data)
+        return {"IsSuccess": True, "message": "ok", "data": result}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
+
+@app.get("/telegram-set-webhook", tags=["telegram"])
+async def set_webhook(url: str):
+    info = get_bot_info()
+    if not info["ok"]:
+        return {"IsSuccess": False, "message": info["message"]}
+    from Handlers.TelegramHandler import bot as tg_bot
+    ok = await tg_bot.set_webhook(url)
+    return {"IsSuccess": True, "message": f"Webhook set: {ok}"}
+
+
+@app.get("/telegram-info", tags=["telegram"])
+async def telegram_info():
+    from Handlers.TelegramHandler import bot as tg_bot, ALLOWED_USERNAME
+    info = get_bot_info()
+    if not info["ok"]:
+        return {"IsSuccess": False, "message": info["message"]}
+    me = await tg_bot.get_me()
+    webhook = await tg_bot.get_webhook_info()
+    return {
+        "IsSuccess": True,
+        "data": {
+            "bot": me.to_dict(),
+            "webhook": webhook.to_dict(),
+            "allowed_username": ALLOWED_USERNAME,
+        },
+    }
+    
+   
 
 @app.get("/getAllInventario", tags=["inventario"])
 async def get_all_inventario():

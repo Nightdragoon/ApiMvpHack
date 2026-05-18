@@ -19,3 +19,8 @@ langchain-deepseek
 sentence-transformers
 pypdf
 pywhatkit
+yagmail
+python-telegram-bot
+pygame
+mail-parser
+imaplib2

@@ -6,6 +6,7 @@ from langchain_deepseek import ChatDeepSeek
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import JsonOutputParser
+import yagmail
 from dotenv import load_dotenv
 import os
 
