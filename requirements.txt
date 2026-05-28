@@ -17,11 +17,13 @@ langchain-community
 langchain-text-splitters
 langchain-deepseek
 sentence-transformers
+langchain-ollama
 pypdf
 pywhatkit
 yagmail
 python-telegram-bot
 pygame
+requests
 mail-parser
 imaplib2
 openai-whisper
