@@ -24,3 +24,4 @@ python-telegram-bot
 pygame
 mail-parser
 imaplib2
+openai-whisper

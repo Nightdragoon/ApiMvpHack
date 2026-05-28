@@ -11,6 +11,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState, START
 from langgraph.prebuilt import ToolNode, tools_condition
 import subprocess
+import requests
 from sqlalchemy import create_engine, select, insert, update, delete
 from sqlalchemy.orm import sessionmaker
 from Handlers.ElevenLabsHandler import ElevenLabsHandler
@@ -21,7 +22,8 @@ import pywhatkit
 import email
 from email import policy
 import imaplib2
-
+import base64
+from Handlers.NotionHandler import NotionHandler
 
 from Handlers.ArduinoHanlder import ArduinoHandler
 
@@ -36,6 +38,7 @@ class DeepagentsHandler:
     _Inventario = _Base.classes.Inventario
     _Empleado = _Base.classes.Empleados
     _Caja = _Base.classes.Caja
+    _Contacto = _Base.classes.Contactos_Autorizados
 
     def __init__(self):
         load_dotenv(".env.local")
@@ -50,6 +53,16 @@ class DeepagentsHandler:
     @staticmethod
     def _get_db():
         return DeepagentsHandler._SessionLocal()
+    
+    
+    @tool
+    def crear_nota_notion(titulo: str, contenido: str) -> str:
+        """Crea una nueva página en Notion con el título y contenido especificados."""
+        notion = NotionHandler()
+        result = notion.create_page(titulo, contenido)
+        if result is None:
+            return json.dumps({"error": "Error al crear la página en Notion"}, ensure_ascii=False)
+        return json.dumps({"message": f"Página creada en Notion con título '{titulo}'"}, ensure_ascii=False)
     
     
     @tool
@@ -82,6 +95,52 @@ class DeepagentsHandler:
             return json.dumps(email_list, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
+        
+        
+    @tool
+    def enviar_whatsapp(numero: str, mensaje: str) -> str:
+        """Envía un mensaje de WhatsApp al número especificado usando request."""
+        try:
+            url = "http://localhost:8080/message/sendText/prueba"
+            headers = {
+                "Content-Type": "application/json",
+                "apikey": "429683C4C977415CAAFCCE10F7D57E11"
+            }
+            body = {
+                "number": numero,
+                "text": mensaje
+            }
+            response = requests.post(url, json=body, headers=headers)
+            return json.dumps({"status_code": response.status_code, "response": response.text}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        
+    @tool
+    def obtener_todos_contactos() -> str:
+        """Obtiene todos los contactos autorizados."""
+        db = DeepagentsHandler._get_db()
+        try:
+            rows = db.execute(select(DeepagentsHandler._Contacto)).scalars().all()
+            return json.dumps(
+                [{"id": r.id, "number": r.number, "nombre": r.nombre} for r in rows],
+                ensure_ascii=False, default=str
+            )
+        finally:
+            db.close()
+    @tool
+    def obtener_numero_por_nombre(nombre: str) -> str:
+        """Obtiene el número de teléfono de un contacto por su nombre."""
+        db = DeepagentsHandler._get_db()
+        try:
+            rows = db.execute(select(DeepagentsHandler._Contacto)).scalars().all()
+            return json.dumps(
+                [{"id": r.id, "number": r.number, "nombre": r.nombre} for r in rows],
+                ensure_ascii=False, default=str
+            )
+        finally:
+            db.close()
+        
+        
     
     @tool
     def enviar_email(destinatario: str, asunto: str, mensaje: str) -> str:
@@ -267,6 +326,29 @@ class DeepagentsHandler:
             )
         finally:
             db.close()
+    @tool
+    def mandar_audio_whatsapp(number: str , text: str) -> str:
+        """Genera un audio a partir de texto y lo envía como WhatsApp."""
+        eleven_handler = ElevenLabsHandler()
+        try:
+            ruta = eleven_handler.generar_audio(text)
+            with open(ruta, "rb") as f:
+                bianry_audio_data = f.read()
+                base_64_encoded_audio = base64.b64encode(bianry_audio_data).decode('utf-8')
+                url = "http://127.0.0.1:8080/message/sendWhatsAppAudio/prueba"
+                headers = {
+                    "Content-Type": "application/json",
+                    "apikey": "429683C4C977415CAAFCCE10F7D57E11"
+                }
+                body = {
+                    "number": number,
+                    "audio": base_64_encoded_audio,
+                }
+                response = requests.post(url, json=body, headers=headers)
+                return json.dumps({"status_code": response.status_code, "response": response.text}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        
 
     @tool 
     def mover_brazo(grad1: int , grad2: int) -> str:
@@ -387,6 +469,11 @@ class DeepagentsHandler:
             self.enviar_archivo_telegram,
             self.hablar_computadora,
             self.leer_emails,
+            self.enviar_whatsapp,
+            self.obtener_todos_contactos,
+            self.obtener_numero_por_nombre,
+            self.mandar_audio_whatsapp,
+            self.crear_nota_notion
         ]
 
         llm = ChatDeepSeek(
@@ -418,11 +505,31 @@ class DeepagentsHandler:
         memory = MemorySaver()
         return builder.compile(checkpointer=memory)
 
+    def generate_summary(self, conversation_text: str) -> str:
+        """Genera un resumen de la conversación usando la misma LLM."""
+        llm = ChatDeepSeek(
+            model="deepseek-chat",
+            api_key=self.deepseek_api_key,
+            temperature=0,
+            max_retries=2,
+        )
+        msg = HumanMessage(
+            content=(
+                "Resume los puntos clave de la siguiente conversación en 3-4 líneas. "
+                "Sé conciso y captura la información importante:\n\n"
+                f"{conversation_text}"
+            )
+        )
+        result = llm.invoke([msg])
+        return result.content
+
     # ──────────────────────── PUBLIC API ────────────────────────
 
-    def run(self, prompt: str, thread_id: str = "default", historial: list[dict] | None = None) -> str:
+    def run(self, prompt: str, thread_id: str = "default", historial: list[dict] | None = None, memoria_largoplazo: str | None = None) -> str:
         config = {"configurable": {"thread_id": thread_id}}
         messages = []
+        if memoria_largoplazo:
+            messages.append(SystemMessage(content=f"[Resumen de conversaciones anteriores]: {memoria_largoplazo}"))
         if historial:
             for msg in historial:
                 if msg["rol"] == "user":
