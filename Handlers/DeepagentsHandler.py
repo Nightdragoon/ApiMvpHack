@@ -2,6 +2,7 @@ import json
 from dotenv import load_dotenv
 import os
 import asyncio
+import re
 from typing import Annotated
 from langchain_ollama import ChatOllama
 from langchain_deepseek import ChatDeepSeek
@@ -24,6 +25,8 @@ from email import policy
 import imaplib2
 import base64
 from Handlers.NotionHandler import NotionHandler
+from html.parser import HTMLParser
+import re
 
 from Handlers.ArduinoHanlder import ArduinoHandler
 
@@ -101,6 +104,7 @@ class DeepagentsHandler:
     def enviar_whatsapp(numero: str, mensaje: str) -> str:
         """Envía un mensaje de WhatsApp al número especificado usando request."""
         try:
+            numero = re.sub(r'\D', '', numero)
             url = "http://localhost:8080/message/sendText/prueba"
             headers = {
                 "Content-Type": "application/json",
@@ -141,6 +145,30 @@ class DeepagentsHandler:
             db.close()
         
         
+        
+    @tool
+    def agregar_contacto(nombre: str, numero: str) -> str:
+        """Agrega un nuevo contacto con nombre y numero de telefono. El numero se normaliza automaticamente."""
+        db = DeepagentsHandler._get_db()
+        try:
+            numero_limpio = re.sub(r'\D', '', numero)
+            if not numero_limpio.startswith('52'):
+                numero_limpio = '52' + numero_limpio
+
+            stmt = insert(DeepagentsHandler._Contacto).values(
+                nombre=nombre, number=numero_limpio
+            ).returning(DeepagentsHandler._Contacto)
+            result = db.execute(stmt)
+            c = result.scalar_one()
+            db.commit()
+            return json.dumps(
+                {"id": c.id, "nombre": c.nombre, "number": c.number},
+                ensure_ascii=False, default=str
+            )
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        finally:
+            db.close()
     
     @tool
     def enviar_email(destinatario: str, asunto: str, mensaje: str) -> str:
@@ -404,6 +432,67 @@ class DeepagentsHandler:
             return json.dumps({"message": "Audio reproducido correctamente"}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
+        
+    @tool
+    def buscar_en_internet(query: str) -> str:
+        """Busca información en internet usando DuckDuckGo y devuelve los primeros resultados"""
+        
+        url = "https://api.duckduckgo.com/"
+        params = {
+            "q": query,
+            "format": "json",
+            "no_html": 1,
+            "skip_disambig": 1
+        }
+        r = requests.get(url, params=params)
+        data = r.json()
+        
+        resultados = []
+        
+        # Respuesta directa si existe
+        if data.get("AbstractText"):
+            resultados.append(f"RESUMEN: {data['AbstractText']}")
+        
+        # Resultados relacionados
+        for item in data.get("RelatedTopics", [])[:5]:
+            if "Text" in item:
+                resultados.append(f"- {item['Text']}")
+                if "FirstURL" in item:
+                    resultados.append(f"  URL: {item['FirstURL']}")
+        
+        return '\n'.join(resultados) or "Sin resultados directos"
+    
+    @tool
+    def leer_pagina_web(url: str) -> str:
+        """Accede a una URL y extrae el texto limpio de la página"""
+
+        class TextExtractor(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.texts = []
+                self.skip_tags = {'script', 'style', 'head'}
+                self.current_skip = False
+
+            def handle_starttag(self, tag, attrs):
+                if tag in self.skip_tags:
+                    self.current_skip = True
+
+            def handle_endtag(self, tag):
+                if tag in self.skip_tags:
+                    self.current_skip = False
+
+            def handle_data(self, data):
+                if not self.current_skip and data.strip():
+                    self.texts.append(data.strip())
+
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=10)
+        
+        parser = TextExtractor()
+        parser.feed(r.text)
+        texto = ' '.join(parser.texts)
+        
+        return texto[:3000]  # Limita para no saturar el contexto
             
         
 
@@ -472,8 +561,11 @@ class DeepagentsHandler:
             self.enviar_whatsapp,
             self.obtener_todos_contactos,
             self.obtener_numero_por_nombre,
+            self.agregar_contacto,
             self.mandar_audio_whatsapp,
-            self.crear_nota_notion
+            self.crear_nota_notion,
+            self.leer_pagina_web,
+            self.buscar_en_internet
         ]
 
         llm = ChatDeepSeek(
