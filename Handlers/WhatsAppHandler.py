@@ -55,9 +55,6 @@ def process_whatsapp_event(event_data: dict, handler) -> dict:
 
         key = data.get("key", {})
 
-        if key.get("fromMe", False):
-            return {"ok": True, "message": "mensaje propio ignorado"}
-
         remote_jid = key.get("remoteJid", "")
         if not remote_jid:
             return {"ok": True, "message": "sin remoteJid"}
