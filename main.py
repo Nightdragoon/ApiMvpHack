@@ -32,6 +32,7 @@ from fastapi.responses import FileResponse
 from Handlers.LangChainHandler import LangChainHandler
 from Handlers.DeepagentsHandler import DeepagentsHandler
 from Handlers.TelegramHandler import process_update, get_bot_info
+from Handlers.WhatsAppHandler import process_whatsapp_event, set_evolution_webhook
 
 load_dotenv(".env.local")
 cliente = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -317,6 +318,12 @@ class TelegramUpdate(BaseModel):
     callback_query: Optional[dict] = None
 
 
+class EvolutionWebhookEvent(BaseModel):
+    event: str
+    instance: str
+    data: dict
+
+
 @app.post("/telegram-webhook", tags=["telegram"])
 async def telegram_webhook(update: TelegramUpdate):
     try:
@@ -353,8 +360,28 @@ async def telegram_info():
             "allowed_username": ALLOWED_USERNAME,
         },
     }
-    
-   
+
+
+@app.post("/whatsapp-webhook", tags=["whatsapp"])
+async def whatsapp_webhook(event: EvolutionWebhookEvent):
+    try:
+        handler = DeepagentsHandler()
+        result = process_whatsapp_event(event.model_dump(), handler)
+        return {"IsSuccess": True, "message": "ok", "data": result}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
+
+@app.get("/whatsapp-set-webhook", tags=["whatsapp"])
+async def whatsapp_set_webhook(url: str):
+    try:
+        result = set_evolution_webhook(url)
+        if result.get("ok"):
+            return {"IsSuccess": True, "message": "Webhook configurado", "data": result}
+        return {"IsSuccess": False, "message": "Error al configurar webhook", "data": result}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
 
 @app.get("/getAllInventario", tags=["inventario"])
 async def get_all_inventario():
