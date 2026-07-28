@@ -44,23 +44,30 @@ def _enviar_whatsapp(numero: str, mensaje: str) -> str:
 
 def process_whatsapp_event(event_data: dict, handler) -> dict:
     try:
+        print(f"[WHATSAPP] PAYLOAD COMPLETO: {json.dumps(event_data, ensure_ascii=False, default=str)[:3000]}")
+
         if event_data.get("event") != "messages.upsert":
             return {"ok": True, "message": "evento ignorado"}
 
         data = event_data.get("data", {})
+        if not data:
+            data = event_data  # fallback si no hay anidacion
+
         key = data.get("key", {})
 
         if key.get("fromMe", False):
             return {"ok": True, "message": "mensaje propio ignorado"}
 
         remote_jid = key.get("remoteJid", "")
-        if not remote_jid or not remote_jid.endswith("@s.whatsapp.net"):
-            return {"ok": True, "message": "remoteJid invalido"}
+        if not remote_jid:
+            return {"ok": True, "message": "sin remoteJid"}
 
-        numero = remote_jid.replace("@s.whatsapp.net", "")
+        numero = remote_jid.replace("@s.whatsapp.net", "").replace("@g.us", "")
         push_name = data.get("pushName", "Desconocido")
         message = data.get("message", {})
         texto = _extraer_texto(message)
+
+        print(f"[WHATSAPP] numero={numero}, pushName={push_name}, texto='{texto}'")
 
         if not texto or not _contiene_mencion(texto):
             return {"ok": True, "message": "sin mencion"}
@@ -84,14 +91,19 @@ def process_whatsapp_event(event_data: dict, handler) -> dict:
 
 def set_evolution_webhook(webhook_url: str) -> dict:
     try:
-        url = f"{EVOLUTION_API_URL}/instance/setWebhook/{EVOLUTION_INSTANCE}"
+        url = f"{EVOLUTION_API_URL}/webhook/set/{EVOLUTION_INSTANCE}"
         headers = {
             "Content-Type": "application/json",
             "apikey": EVOLUTION_APIKEY
         }
         body = {
-            "webhook": webhook_url,
-            "events": ["messages.upsert"]
+            "webhook": {
+                "enabled": True,
+                "url": webhook_url,
+                "webhook_by_events": False,
+                "webhook_base64": False,
+                "events": ["MESSAGES_UPSERT"]
+            }
         }
         response = requests.post(url, json=body, headers=headers)
         return {
