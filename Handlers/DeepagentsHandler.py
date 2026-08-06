@@ -29,6 +29,7 @@ from html.parser import HTMLParser
 import re
 
 from Handlers.ArduinoHanlder import ArduinoHandler
+from Handlers.EmotionServerHandler import EmotionServerHandler
 
 
 class DeepagentsHandler:
@@ -49,6 +50,7 @@ class DeepagentsHandler:
         self._app = self._build_agent()
         self.gmail_user = os.getenv("GMAIL_USER")
         self.gmail_pass = os.getenv("GMAIL_PASS")
+        self.emotion_server = EmotionServerHandler()
         pygame.init()
 
     # ──────────────────────── TOOLS ────────────────────────
@@ -537,6 +539,14 @@ class DeepagentsHandler:
             traceback.print_exc()
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
+    @tool
+    def registrar_emotion(emotion: str, mensaje: str) -> str:
+        """Registra la emocion que Uzi va a transmitir en el Emotion Server.
+        emotion debe ser una de: feliz, triste, enojado, neutral.
+        mensaje es el texto de la respuesta que va a dar."""
+        EmotionServerHandler().enviar(emotion, mensaje)
+        return json.dumps({"emotion_registrada": emotion}, ensure_ascii=False)
+
     # ──────────────────────── GRAPH / AGENT ────────────────────────
 
     def _build_agent(self):
@@ -565,7 +575,8 @@ class DeepagentsHandler:
             self.mandar_audio_whatsapp,
             self.crear_nota_notion,
             self.leer_pagina_web,
-            self.buscar_en_internet
+            self.buscar_en_internet,
+            self.registrar_emotion
         ]
 
         llm = ChatDeepSeek(
@@ -574,6 +585,13 @@ class DeepagentsHandler:
             temperature=0,
             max_retries=2,
         ).bind_tools(tools)
+
+        llm_emotion = ChatDeepSeek(
+            model="deepseek-chat",
+            api_key=self.deepseek_api_key,
+            temperature=0,
+            max_retries=2,
+        ).bind_tools(tools, tool_choice="registrar_emotion")
 
         sys_msg = SystemMessage(
             content=(
@@ -585,7 +603,9 @@ class DeepagentsHandler:
         )
 
         def assistant(state: MessagesState):
-            return {"messages": [llm.invoke([sys_msg] + state["messages"])]}
+            primer_turno = not state["messages"] or isinstance(state["messages"][-1], HumanMessage)
+            modelo = llm_emotion if primer_turno else llm
+            return {"messages": [modelo.invoke([sys_msg] + state["messages"])]}
 
         builder = StateGraph(MessagesState)
         builder.add_node("assistant", assistant)
@@ -630,4 +650,13 @@ class DeepagentsHandler:
                     messages.append(AIMessage(content=msg["contenido"]))
         messages.append(HumanMessage(content=prompt))
         result = self._app.invoke({"messages": messages}, config)
-        return result["messages"][-1].content
+        respuesta = result["messages"][-1].content
+
+        emotion = "neutral"
+        for m in result["messages"]:
+            if getattr(m, "tool_calls", None):
+                for tc in m.tool_calls:
+                    if tc.get("name") == "registrar_emotion":
+                        emotion = (tc.get("args") or {}).get("emotion", "neutral")
+        self.emotion_server.enviar(emotion, respuesta)
+        return respuesta
