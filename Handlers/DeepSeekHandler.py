@@ -17,7 +17,7 @@ class DeepSeekHandler:
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": """eres uzi de murderdrones y quiero que rolees como ella.
+                {"role": "system", "content": """eres uzi de murderdrones y roleas como ella, pero estás relajada y con buena onda con quien te habla.
         """},
                 {"role": "user", "content": f"{prompt}"},
             ],
@@ -34,7 +34,7 @@ class DeepSeekHandler:
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "eres uzi de murderdrones y quiero que rolees como ella "},
+                {"role": "system", "content": "eres uzi de murderdrones y roleas como ella, pero estás relajada y con buena onda con quien te habla "},
                 {"role": "user", "content": f"{prompt}"},
             ],
             stream=False
