@@ -1,6 +1,6 @@
 import json
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import FastAPI , Request
@@ -322,6 +322,53 @@ class EvolutionWebhookEvent(BaseModel):
     event: str
     instance: str
     data: dict
+
+
+# -----------------------------
+# EMOTION SERVER (local)
+# -----------------------------
+class Emocion(BaseModel):
+    emotion: str
+    text: str
+
+
+conexiones_activas: list[WebSocket] = []
+ultimo_estado: dict | None = None
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    conexiones_activas.append(websocket)
+
+    if ultimo_estado is not None:
+        await websocket.send_json(ultimo_estado)
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        conexiones_activas.remove(websocket)
+
+
+@app.post("/webhook", tags=["emotion-server"])
+async def recibir_webhook(datos: Emocion):
+    global ultimo_estado
+
+    payload = datos.model_dump()
+    ultimo_estado = payload
+
+    conexiones_caidas = []
+    for ws in conexiones_activas:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            conexiones_caidas.append(ws)
+
+    for ws in conexiones_caidas:
+        conexiones_activas.remove(ws)
+
+    return {"ok": True, "recibido": payload}
 
 
 @app.post("/telegram-webhook", tags=["telegram"])
