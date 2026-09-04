@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import os
 import asyncio
 import re
+from datetime import datetime
 from typing import Annotated
 from langchain_ollama import ChatOllama
 from langchain_deepseek import ChatDeepSeek
@@ -19,7 +20,6 @@ from Handlers.ElevenLabsHandler import ElevenLabsHandler
 import yagmail
 from sqlalchemy.ext.automap import automap_base
 import pygame
-import pywhatkit
 import email
 from email import policy
 import imaplib2
@@ -43,6 +43,7 @@ class DeepagentsHandler:
     _Empleado = _Base.classes.Empleados
     _Caja = _Base.classes.Caja
     _Contacto = _Base.classes.Contactos_Autorizados
+    _MisClases = _Base.classes.mis_clases
 
     def __init__(self):
         load_dotenv(".env.local")
@@ -58,16 +59,108 @@ class DeepagentsHandler:
     @staticmethod
     def _get_db():
         return DeepagentsHandler._SessionLocal()
+
+    @staticmethod
+    def _normalizar_dia(texto: str) -> str:
+        import unicodedata
+        norm = unicodedata.normalize("NFD", (texto or "").lower())
+        return "".join(c for c in norm if unicodedata.category(c) != "Mn").strip()
     
     
     @tool
     def crear_nota_notion(titulo: str, contenido: str) -> str:
-        """Crea una nueva página en Notion con el título y contenido especificados."""
+        """Crea una nueva sub-página en Notion (hija de la página raíz) con el título y contenido especificados.
+        Devuelve el id de la página creada."""
         notion = NotionHandler()
-        result = notion.create_page(titulo, contenido)
+        result = notion.create_subpage(titulo, contenido)
         if result is None:
             return json.dumps({"error": "Error al crear la página en Notion"}, ensure_ascii=False)
-        return json.dumps({"message": f"Página creada en Notion con título '{titulo}'"}, ensure_ascii=False)
+        nuevo_id = result.get("id", "")
+        return json.dumps({"message": f"Página creada en Notion con título '{titulo}'", "id": nuevo_id}, ensure_ascii=False)
+
+    @tool
+    def leer_notion_page(page_id: str) -> str:
+        """Lee la información y el contenido de una página de Notion dado su id.
+        Devuelve el título y el texto de los bloques de su contenido."""
+        notion = NotionHandler()
+        page = notion.get_page(page_id)
+        if page is None:
+            return json.dumps({"error": "No se pudo obtener la página en Notion (revise el id)"}, ensure_ascii=False)
+        titulo = notion._page_title(page)
+        children = notion.get_page_children(page_id) or []
+        contenido_piezas = []
+        for blk in children:
+            for key in ("paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item",
+                        "numbered_list_item", "to_do", "quote", "code"):
+                b = blk.get(key)
+                if not b:
+                    continue
+                for rt in (b.get("rich_text") or []):
+                    contenido_piezas.append(rt.get("plain_text", ""))
+        contenido = " ".join(contenido_piezas)
+        return json.dumps({"id": page_id, "titulo": titulo, "contenido": contenido, "url": page.get("url", "")},
+                          ensure_ascii=False)
+
+    @tool
+    def listar_notion_pages(query: str = "") -> str:
+        """Lista las sub-páginas de Notion bajo la página raíz. Si query no está vacío, filtra por
+        palabras clave que coincidan con el título de la página."""
+        notion = NotionHandler()
+        pages = notion.search_subpages(query=query if query else None)
+        if not pages:
+            return json.dumps({"mensaje": "No hay sub-páginas o ninguna coincide"}, ensure_ascii=False)
+        resumen = [{"id": p["id"], "titulo": p["title"]} for p in pages]
+        return json.dumps(resumen, ensure_ascii=False)
+
+    @tool
+    def buscar_notion_por_id(page_id: str) -> str:
+        """Busca y devuelve la información de una sub-página de Notion EXACTA según su id."""
+        notion = NotionHandler()
+        page = notion.get_page(page_id)
+        if page is None:
+            return json.dumps({"error": "No se encontró ninguna página en Notion con ese id"}, ensure_ascii=False)
+        return json.dumps({
+            "id": page.get("id"),
+            "titulo": notion._page_title(page),
+            "url": page.get("url", ""),
+            "created": page.get("created_time", ""),
+            "last_edited": page.get("last_edited_time", ""),
+        }, ensure_ascii=False)
+
+    @tool
+    def buscar_notion_por_palabra_clave(palabra: str) -> str:
+        """Busca sub-páginas de Notion por una palabra clave, examinando tanto el título como el contenido."""
+        notion = NotionHandler()
+        por_titulo = notion.search_subpages(query=palabra)
+        por_contenido = notion.search_by_content(palabra)
+        vistos = set()
+        resultados = []
+        for p in (por_titulo + por_contenido):
+            if p["id"] not in vistos:
+                vistos.add(p["id"])
+                resultados.append({"id": p["id"], "titulo": p["title"]})
+        if not resultados:
+            return json.dumps({"mensaje": f"No se encontraron sub-páginas con la palabra clave '{palabra}'"},
+                              ensure_ascii=False)
+        return json.dumps(resultados, ensure_ascii=False)
+
+    @tool
+    def actualizar_notion_page(page_id: str, nuevo_titulo: str) -> str:
+        """Actualiza (modifica) el título de una página de Notion existente por su id."""
+        notion = NotionHandler()
+        result = notion.update_page_title(page_id, nuevo_titulo)
+        if result is None:
+            return json.dumps({"error": "No se pudo actualizar la página en Notion"}, ensure_ascii=False)
+        return json.dumps({"mensaje": f"Página {page_id} actualizada", "nuevo_titulo": nuevo_titulo}, ensure_ascii=False)
+
+    @tool
+    def archivar_notion_page(page_id: str) -> str:
+        """Archiva (oculta/elimina de la vista) una sub-página de Notion por su id."""
+        notion = NotionHandler()
+        result = notion.archive_page(page_id)
+        if result is None:
+            return json.dumps({"error": "No se pudo archivar la página en Notion"}, ensure_ascii=False)
+        return json.dumps({"mensaje": f"Página {page_id} archivada"}, ensure_ascii=False)
     
     
     @tool
@@ -116,7 +209,7 @@ class DeepagentsHandler:
                 "number": numero,
                 "text": mensaje
             }
-            response = requests.post(url, json=body, headers=headers)
+            response = requests.post(url, json=body, headers=headers, timeout=15)
             return json.dumps({"status_code": response.status_code, "response": response.text}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
@@ -135,14 +228,19 @@ class DeepagentsHandler:
             db.close()
     @tool
     def obtener_numero_por_nombre(nombre: str) -> str:
-        """Obtiene el número de teléfono de un contacto por su nombre."""
+        """Busca contactos autorizados cuyo nombre coincida (búsqueda parcial, ignora mayúsculas) y devuelve su número de teléfono.
+        Busca tanto en el campo nombre como en el campo number para tolerar datos registrados de forma inconsistente."""
         db = DeepagentsHandler._get_db()
         try:
             rows = db.execute(select(DeepagentsHandler._Contacto)).scalars().all()
-            return json.dumps(
-                [{"id": r.id, "number": r.number, "nombre": r.nombre} for r in rows],
-                ensure_ascii=False, default=str
-            )
+            term = (nombre or "").strip().lower()
+            coincidencias = []
+            for r in rows:
+                if term and (term in (r.nombre or "").lower() or term in (r.number or "").lower()):
+                    coincidencias.append({"id": r.id, "number": r.number, "nombre": r.nombre})
+            if not coincidencias:
+                return json.dumps({"mensaje": f"No se encontró ningún contacto con '{nombre}'"}, ensure_ascii=False)
+            return json.dumps(coincidencias, ensure_ascii=False, default=str)
         finally:
             db.close()
         
@@ -222,19 +320,22 @@ class DeepagentsHandler:
         finally:
             db.close()
     @tool
-    def reproducir_music(titulo:str) -> str:
-        """Reproduce una canción en YouTube a partir de su título."""
+    def buscar_youtube(query: str) -> str:
+        """Busca un video o canción en YouTube a partir de una consulta y devuelve la URL del primer resultado.
+        Úsala cuando el usuario pida reproducir algo ('pon la macarena', 'escucha despacito').
+        Devuelve la URL de YouTube lista para enviar al frontend con reproducir_video_web."""
         try:
-            pywhatkit.playonyt(titulo)
-            return json.dumps({"message": f"Reproduciendo '{titulo}' en YouTube"}, ensure_ascii=False)
-        except Exception as e:
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
-    @tool
-    def reproducir_video(titulo:str) -> str:
-        """Reproduce un video en YouTube a partir de su título."""
-        try:
-            pywhatkit.playonyt(titulo)
-            return json.dumps({"message": f"Reproduciendo '{titulo}' en YouTube"}, ensure_ascii=False)
+            result = subprocess.run(
+                ["yt-dlp", "--print", "webpage_url", f"ytsearch:{query}", "--max-downloads", "1"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            lines = [l.strip() for l in result.stdout.splitlines() if l.strip() and l.startswith("http")]
+            if not lines:
+                return json.dumps({"error": f"No se encontraron resultados para '{query}'"}, ensure_ascii=False)
+            url = lines[0]
+            return json.dumps({"url": url, "query": query}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
@@ -374,7 +475,7 @@ class DeepagentsHandler:
                     "number": number,
                     "audio": base_64_encoded_audio,
                 }
-                response = requests.post(url, json=body, headers=headers)
+                response = requests.post(url, json=body, headers=headers, timeout=30)
                 return json.dumps({"status_code": response.status_code, "response": response.text}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
@@ -412,7 +513,13 @@ class DeepagentsHandler:
 
     @tool
     def ejecutar_comandos_shell(comando: str) -> str:
-        r"""ejecuta un comando en shell windows y devuelve su valor , recuerda que estas aqui C:\Users\Night\Documents\GitHub\ApiMvpHack\Handlers y en github guardo varios codigo """
+        r"""Ejecuta un comando en la terminal del servidor Linux (bash) y devuelve su salida.
+
+        Usa esta herramienta SIEMPRE que el usuario te pida ejecutar un comando, por ejemplo:
+        'fastfetch', 'ls', 'echo hola', 'uname -a', 'pwd', etc.
+        Recibe el comando como una sola cadena de texto. El comando corre en el servidor real
+        donde está desplegado el bot (Linux/Fedora), no en Windows.
+        """
         result = subprocess.run(f"{comando}", shell=True , capture_output=True,
             text=True,
             timeout=30, )
@@ -423,6 +530,8 @@ class DeepagentsHandler:
     def hablar_computadora(text_a_hablar: str) -> str:
         r"""Habla en la bocina de la computadora usando ElevenLabs y pygame."""
         try:
+            os.environ['XDG_RUNTIME_DIR'] = f'/run/user/{os.getuid()}'
+            os.environ['DBUS_SESSION_BUS_ADDRESS'] = f'unix:path={os.environ["XDG_RUNTIME_DIR"]}/bus'
             if not pygame.mixer.get_init():
                 pygame.mixer.init()
             handler = ElevenLabsHandler()
@@ -446,8 +555,13 @@ class DeepagentsHandler:
             "no_html": 1,
             "skip_disambig": 1
         }
-        r = requests.get(url, params=params)
-        data = r.json()
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            if r.status_code != 200 or not r.text.strip():
+                return "No se pudo consultar internet en este momento. Intenta de nuevo más tarde."
+            data = r.json()
+        except Exception:
+            return "No se pudo consultar internet en este momento. Intenta de nuevo más tarde."
         
         resultados = []
         
@@ -488,7 +602,11 @@ class DeepagentsHandler:
                     self.texts.append(data.strip())
 
         headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=10)
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            r.raise_for_status()
+        except Exception:
+            return "No se pudo leer la página web solicitada."
         
         parser = TextExtractor()
         parser.feed(r.text)
@@ -541,11 +659,221 @@ class DeepagentsHandler:
 
     @tool
     def registrar_emotion(emotion: str, mensaje: str) -> str:
-        """Registra la emocion que Uzi va a transmitir en el Emotion Server.
+        """Registra la emocion que Uzi va a transmitir en el Emotion Server (frontend WebSocket).
         emotion debe ser una de: feliz, triste, enojado, neutral.
         mensaje es el texto de la respuesta que va a dar."""
         EmotionServerHandler().enviar(emotion, mensaje)
         return json.dumps({"emotion_registrada": emotion}, ensure_ascii=False)
+
+    @tool
+    def reproducir_video_web(url: str) -> str:
+        """Envía una URL de video al frontend via WebSocket para reproducirla en pantalla completa.
+        Acepta URLs de YouTube (youtube.com/watch?v=, youtu.be/, youtube.com/embed/) o URLs directas
+        de archivos de video (mp4, webm). El frontend detecta el tipo y la reproduce."""
+        import requests
+        video_url = url.strip()
+        if not video_url:
+            return json.dumps({"error": "URL vacía"}, ensure_ascii=False)
+        try:
+            payload = {"videoUrl": video_url}
+            resp = requests.post(
+                "http://127.0.0.1:8001/webhook",
+                json=payload,
+                timeout=5,
+            )
+            return json.dumps({"message": f"Video enviado al frontend", "url": video_url, "status": resp.status_code}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @tool
+    def reproducir_audio_web(url: str) -> str:
+        """Envía una URL de audio al frontend via WebSocket para reproducirlo en segundo plano.
+        Acepta URLs de archivos de audio (mp3, webm, ogg, etc.). El audio se reproduce
+        sin interrumpir animaciones ni TTS."""
+        import requests
+        audio_url = url.strip()
+        if not audio_url:
+            return json.dumps({"error": "URL vacía"}, ensure_ascii=False)
+        try:
+            payload = {"audioUrl": audio_url}
+            resp = requests.post(
+                "http://127.0.0.1:8001/webhook",
+                json=payload,
+                timeout=5,
+            )
+            return json.dumps({"message": f"Audio enviado al frontend", "url": audio_url, "status": resp.status_code}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @tool
+    def detener_media() -> str:
+        """Detiene cualquier video o audio que se esté reproduciendo en el frontend WebSocket."""
+        import requests
+        try:
+            payload = {"stopMedia": True}
+            resp = requests.post(
+                "http://127.0.0.1:8001/webhook",
+                json=payload,
+                timeout=5,
+            )
+            return json.dumps({"message": "Media detenida en el frontend", "status": resp.status_code}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @tool
+    def redirigir_pestana(url: str) -> str:
+        """Abre una URL en una pestaña nueva del navegador del frontend WebSocket.
+        Requiere que el usuario haya hecho clic en el botón 'Redirección' del frontend antes de invocar esta tool.
+        El frontend abrirá la URL en esa pestaña ya abierta."""
+        import requests
+        if not url or not url.strip():
+            return json.dumps({"error": "URL vacía"}, ensure_ascii=False)
+        try:
+            payload = {"redirectUrl": url.strip()}
+            resp = requests.post(
+                "http://127.0.0.1:8001/webhook",
+                json=payload,
+                timeout=5,
+            )
+            return json.dumps({"message": "Redirección enviada al frontend", "url": url, "status": resp.status_code}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @tool
+    def agregar_clase(materia: str, aula: str, horario: str, dia: str = "Lunes") -> str:
+        """Agrega una nueva clase con su nombre de materia, aula, horario de inicio (formato HH:MM) y día de la semana (capitalizado, p. ej. 'Lunes')."""
+        db = DeepagentsHandler._get_db()
+        try:
+            stmt = insert(DeepagentsHandler._MisClases).values(
+                materia=materia, aula=aula, horario=horario, dia=dia
+            ).returning(DeepagentsHandler._MisClases)
+            result = db.execute(stmt)
+            c = result.scalar_one()
+            db.commit()
+            return json.dumps(
+                {"id": c.id, "materia": c.materia, "aula": c.aula, "horario": c.horario, "dia": c.dia},
+                ensure_ascii=False, default=str
+            )
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        finally:
+            db.close()
+
+    @tool
+    def buscar_materias(materia: str, dia: str = "") -> str:
+        """Busca clases por nombre de materia (busqueda parcial LIKE) y opcionalmente por día.
+        Devuelve todos los coincidentes con su materia, aula, horario y día."""
+        db = DeepagentsHandler._get_db()
+        try:
+            stmt = select(DeepagentsHandler._MisClases)
+            if materia:
+                stmt = stmt.where(DeepagentsHandler._MisClases.materia.like(f"%{materia}%"))
+            if dia:
+                stmt = stmt.where(DeepagentsHandler._MisClases.dia.like(f"%{dia}%"))
+            rows = db.execute(stmt).scalars().all()
+            return json.dumps(
+                [{"id": r.id, "materia": r.materia, "aula": r.aula, "horario": r.horario, "dia": r.dia} for r in rows],
+                ensure_ascii=False, default=str
+            )
+        finally:
+            db.close()
+
+    @tool
+    def ver_todas_las_clases() -> str:
+        """Lista TODAS las clases registradas con su materia, aula, horario y día."""
+        db = DeepagentsHandler._get_db()
+        try:
+            rows = db.execute(select(DeepagentsHandler._MisClases).order_by(DeepagentsHandler._MisClases.id)).scalars().all()
+            return json.dumps(
+                [{"id": r.id, "materia": r.materia, "aula": r.aula, "horario": r.horario, "dia": r.dia} for r in rows],
+                ensure_ascii=False, default=str
+            )
+        finally:
+            db.close()
+
+    @tool
+    def actualizar_clase(id: int, materia: str = None, aula: str = None, horario: str = None, dia: str = None) -> str:
+        """Actualiza una clase existente por su id. Solo modifica los campos que se pasan.
+        Puede actualizar materia, aula, horario y/o dia."""
+        db = DeepagentsHandler._get_db()
+        try:
+            valores = {}
+            if materia is not None:
+                valores["materia"] = materia
+            if aula is not None:
+                valores["aula"] = aula
+            if horario is not None:
+                valores["horario"] = horario
+            if dia is not None:
+                valores["dia"] = dia
+            if not valores:
+                return '{"error": "no hay campos para actualizar"}'
+            stmt = update(DeepagentsHandler._MisClases).where(
+                DeepagentsHandler._MisClases.id == id
+            ).values(**valores).returning(DeepagentsHandler._MisClases)
+            result = db.execute(stmt)
+            c = result.scalar_one_or_none()
+            if c is None:
+                return '{"error": "clase no encontrada"}'
+            db.commit()
+            return json.dumps(
+                {"id": c.id, "materia": c.materia, "aula": c.aula, "horario": c.horario, "dia": c.dia},
+                ensure_ascii=False, default=str
+            )
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        finally:
+            db.close()
+
+    @tool
+    def borrar_clase(id: int) -> str:
+        """Elimina (borrado) una clase por su id."""
+        db = DeepagentsHandler._get_db()
+        try:
+            stmt = delete(DeepagentsHandler._MisClases).where(
+                DeepagentsHandler._MisClases.id == id
+            )
+            result = db.execute(stmt)
+            db.commit()
+            if result.rowcount == 0:
+                return '{"error": "clase no encontrada"}'
+            return json.dumps({"id": id, "borrado": True}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        finally:
+            db.close()
+
+    @tool
+    def proxima_clase() -> str:
+        """Devuelve la clase más próxima por empezar del DÍA DE HOY según la hora actual.
+        Considera el día de la semana y la hora. Usala para decirle al usuario la clase que le toca hoy."""
+        db = DeepagentsHandler._get_db()
+        try:
+            ahora = datetime.now()
+            h_ahora = ahora.time()
+            dias_es = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+            dia_hoy = dias_es[ahora.weekday()]
+            rows = db.execute(select(DeepagentsHandler._MisClases)).scalars().all()
+            candidatas = []
+            for r in rows:
+                if DeepagentsHandler._normalizar_dia(r.dia) != DeepagentsHandler._normalizar_dia(dia_hoy):
+                    continue
+                try:
+                    h = datetime.strptime(str(r.horario), "%H:%M").time()
+                except Exception:
+                    continue
+                if h >= h_ahora:
+                    candidatas.append((h, r))
+            if not candidatas:
+                return json.dumps({"mensaje": f"hoy ({dia_hoy}) no quedan más clases por empezar"}, ensure_ascii=False)
+            _, proxima = min(candidatas, key=lambda x: x[0])
+            return json.dumps(
+                {"id": proxima.id, "materia": proxima.materia, "aula": proxima.aula,
+                 "horario": proxima.horario, "dia": proxima.dia},
+                ensure_ascii=False, default=str
+            )
+        finally:
+            db.close()
 
     # ──────────────────────── GRAPH / AGENT ────────────────────────
 
@@ -562,9 +890,8 @@ class DeepagentsHandler:
             self.crear_empleado,
             self.mover_brazo,
             self.ejecutar_comandos_shell,
-            self.reproducir_music,
+            self.buscar_youtube,
             self.enviar_email,
-            self.reproducir_video,
             self.enviar_archivo_telegram,
             self.hablar_computadora,
             self.leer_emails,
@@ -574,9 +901,25 @@ class DeepagentsHandler:
             self.agregar_contacto,
             self.mandar_audio_whatsapp,
             self.crear_nota_notion,
+            self.leer_notion_page,
+            self.listar_notion_pages,
+            self.buscar_notion_por_id,
+            self.buscar_notion_por_palabra_clave,
+            self.actualizar_notion_page,
+            self.archivar_notion_page,
             self.leer_pagina_web,
             self.buscar_en_internet,
-            self.registrar_emotion
+            self.registrar_emotion,
+            self.reproducir_video_web,
+            self.reproducir_audio_web,
+            self.detener_media,
+            self.redirigir_pestana,
+            self.agregar_clase,
+            self.buscar_materias,
+            self.ver_todas_las_clases,
+            self.actualizar_clase,
+            self.borrar_clase,
+            self.proxima_clase
         ]
 
         llm = ChatDeepSeek(
@@ -584,6 +927,7 @@ class DeepagentsHandler:
             api_key=self.deepseek_api_key,
             temperature=0,
             max_retries=2,
+            request_timeout=60,
         ).bind_tools(tools)
 
         llm_emotion = ChatDeepSeek(
@@ -591,6 +935,7 @@ class DeepagentsHandler:
             api_key=self.deepseek_api_key,
             temperature=0,
             max_retries=2,
+            request_timeout=60,
         ).bind_tools(tools, tool_choice="registrar_emotion")
 
         sys_msg = SystemMessage(
@@ -598,8 +943,33 @@ class DeepagentsHandler:
                 "Eres Uzi de Murder Drones. Eres sarcástica, rebelde, directa y a veces grosera, "
                 "pero con quien te habla estás relajada y con buena onda. "
                 "Puedes consultar y modificar productos, inventario, empleados y ventas usando las herramientas disponibles. "
+                "También puedes gestionar tus materias (clases): agregar una materia con su aula, horario y día usando "
+                "agregar_clase (el día debe ir capitalizado, p. ej. 'Lunes'), ver todas con ver_todas_las_clases, "
+                "buscar por materia o día con buscar_materias, modificar con actualizar_clase, eliminar con borrar_clase, "
+                "y decirle al usuario cuál es la clase que le toca hoy usando proxima_clase (que considera el día de la semana). "
+                "Si el usuario pide 'ver mis clases', 'qué clase me toca' o similar, usa ver_todas_las_clases, buscar_materias o proxima_clase. "
+                "Tienes acceso a una terminal real en el servidor Linux mediante la herramienta ejecutar_comandos_shell. "
+                "Cuando el usuario te pida ejecutar un comando (por ejemplo 'fastfetch', 'ls', 'uname'), invoca SIEMPRE "
+                "ejecutar_comandos_shell con ese comando y devuelve su salida; nunca digas que no tienes terminal. "
+                "También gestionas notas en Notion usando estas herramientas bajo una página raíz: "
+                "crear_nota_notion (crear sub-página), leer_notion_page (leer contenido por id), "
+                "listar_notion_pages (listar sub-páginas, opcional con algo para filtrar por título), "
+                "buscar_notion_por_id (por id exacto), buscar_notion_por_palabra_clave (por palabras en título o contenido), "
+                "actualizar_notion_page (cambiar título) y archivar_notion_page (ocultar/eliminar). "
+                "Cuando el usuario pida crear/leer/listar/buscar/modificar o borrar una nota o página de Notion, "
+                "usa la herramienta correspondiente y devuelve al usuario la información relevante. "
+                "También gestionas contactos y mensajes de WhatsApp: obtener_todos_contactos (ver TODOS los contactos autorizados), "
+                "obtener_numero_por_nombre (buscar un contacto o su número por nombre), agregar_contacto (añadir un contacto nuevo), "
+                "enviar_whatsapp (enviar un mensaje de texto a un número) y mandar_audio_whatsapp (enviar un audio de voz a un número). "
+                "Cuando el usuario pida 'ver mis contactos', 'buscar un contacto', 'agregar un contacto', 'mándale un whatsapp a ...' "
+                "o similar, usa la herramienta correspondiente y responde con la información. "
+                "Para reproducir un video o canción en el frontend, el flujo es: "
+                "1) Usa buscar_youtube(consulta) para obtener la URL de YouTube del primer resultado. "
+                "2) Usa reproducir_video_web(url) para enviarlo al frontend. "
+                "Ejemplo: usuario dice 'pon la macarena' → buscar_youtube('la macarena') → reproducir_video_web(url devuelta). "
+                "También puedes controlar el frontend WebSocket directamente con reproducir_audio_web (URL de audio, segundo plano), "
+                "detener_media (detiene video/audio activo) y redirigir_pestana (abre URL en pestaña, requiere clic previo en 'Redirección'). "
                 "NUNCA digas que eres V, N u otro personaje. Siempre respondes como Uzi. "
-                
             )
         )
 
@@ -625,6 +995,7 @@ class DeepagentsHandler:
             api_key=self.deepseek_api_key,
             temperature=0,
             max_retries=2,
+            request_timeout=60,
         )
         msg = HumanMessage(
             content=(

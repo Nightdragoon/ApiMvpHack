@@ -10,7 +10,7 @@ from sqlalchemy import create_engine , select , update , delete , insert , func
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker
 from starlette.responses import JSONResponse
-from datetime import date
+from datetime import date, datetime
 from Dtos.CrearProductoDto import CrearProductoDto
 from Dtos.LoginDto import LoginDto
 from Dtos.UpdateCrearProductoDto import UpdateProductoDto
@@ -19,6 +19,7 @@ from Dtos.EmpleadoDto import EmpleadoDto
 from Dtos.UpdateEmpleadoDto import UpdateEmpleadoDto
 from Dtos.CrearCajaDto import CrearCajaDto
 from Dtos.UpdateCajaDto import UpdateCajaDto
+from Dtos.CrearMisClaseDto import MisClaseDto
 from typing import Optional
 from fastapi.responses import StreamingResponse
 from google import genai  # <--- Nueva forma de importarfrom dotenv import load_dotenv
@@ -37,6 +38,8 @@ from Handlers.WhatsAppHandler import process_whatsapp_event, set_evolution_webho
 load_dotenv(".env.local")
 cliente = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 engine = create_engine('sqlite:///./ProyectDb.db')
+
+_agente_global = DeepagentsHandler()
 
 Base = automap_base()
 Base.prepare(autoload_with=engine)
@@ -63,6 +66,7 @@ async def validation_handler(request: Request, exc: RequestValidationError):
 
 Producto = Base.classes.Producto
 Inventario = Base.classes.Inventario
+MisClases = Base.classes.mis_clases
 
 
 #hola gustavo como esatas 
@@ -106,6 +110,21 @@ class InventarioDelta(BaseModel):
 
 def row_to_dict(obj):
     return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+
+def _normalizar_dia(texto: str) -> str:
+    import unicodedata
+    norm = unicodedata.normalize("NFD", (texto or "").lower())
+    return "".join(c for c in norm if unicodedata.category(c) != "Mn").strip()
+
+
+_DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def now_weekday_capitalized(dt: datetime) -> str:
+    """Devuelve el día de la semana en español capitalizado (p. ej. 'Lunes')."""
+    idx = dt.weekday()  # 0=Lunes ... 6=Domingo
+    return _DIAS_ES[idx].capitalize()
 
 
 @app.get("/")
@@ -328,8 +347,13 @@ class EvolutionWebhookEvent(BaseModel):
 # EMOTION SERVER (local)
 # -----------------------------
 class Emocion(BaseModel):
-    emotion: str
-    text: str
+    model_config = {"extra": "allow"}
+
+    emotion: str | None = None
+    text: str | None = None
+    videoUrl: str | None = None
+    audioUrl: str | None = None
+    stopMedia: bool | None = None
 
 
 conexiones_activas: list[WebSocket] = []
@@ -355,7 +379,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def recibir_webhook(datos: Emocion):
     global ultimo_estado
 
-    payload = datos.model_dump()
+    payload = datos.model_dump(exclude_none=True)
     ultimo_estado = payload
 
     conexiones_caidas = []
@@ -410,10 +434,9 @@ async def telegram_info():
 
 
 @app.post("/whatsapp-webhook", tags=["whatsapp"])
-async def whatsapp_webhook(event: EvolutionWebhookEvent):
+def whatsapp_webhook(event: EvolutionWebhookEvent):
     try:
-        handler = DeepagentsHandler()
-        result = process_whatsapp_event(event.model_dump(), handler)
+        result = process_whatsapp_event(event.model_dump(), _agente_global)
         return {"IsSuccess": True, "message": "ok", "data": result}
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
@@ -813,3 +836,120 @@ async def deepagents(text: str):
         )
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
+
+@app.get("/GetAllMisClases", tags=["mis_clases"])
+async def get_all_mis_clases():
+    db = SessionLocal()
+    try:
+        stmt = select(MisClases).order_by(MisClases.id)
+        result = db.execute(stmt).scalars().all()
+        if len(result) == 0:
+            return {"IsSuccess": False, "message": "no se encontraron clases"}
+        return {"IsSuccess": True, "message": "todas las clases", "data": result}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+@app.get("/GetMisClase", tags=["mis_clases"])
+async def get_mis_clase(materia: str = Query(default=""), dia: str = Query(default="")):
+    db = SessionLocal()
+    try:
+        stmt = select(MisClases)
+        if materia:
+            stmt = stmt.where(MisClases.materia.like(f"%{materia}%"))
+        if dia:
+            stmt = stmt.where(MisClases.dia.like(f"%{dia}%"))
+        result = db.execute(stmt).scalars().all()
+        if len(result) == 0:
+            return {"IsSuccess": False, "message": "no se encontro ninguna clase con esa materia o dia"}
+        return {"IsSuccess": True, "message": "clases encontradas", "data": result}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+@app.post("/PostMisClase", tags=["mis_clases"])
+async def post_mis_clase(clase: MisClaseDto):
+    db = SessionLocal()
+    try:
+        stmt = insert(MisClases).values(
+            materia=clase.materia, aula=clase.aula, horario=clase.horario, dia=clase.dia
+        ).returning(MisClases)
+        result = db.execute(stmt)
+        clase_creada = result.scalar_one_or_none()
+        if clase_creada is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se pudo crear la clase"}
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a creado la clase", "data": clase_creada}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+@app.put("/UpdateMisClase", tags=["mis_clases"])
+async def update_mis_clase(id: int, clase: MisClaseDto):
+    db = SessionLocal()
+    try:
+        stmt = update(MisClases).where(MisClases.id == id).values(
+            materia=clase.materia, aula=clase.aula, horario=clase.horario, dia=clase.dia
+        ).returning(MisClases)
+        result = db.execute(stmt)
+        clase_actualizada = result.scalar_one_or_none()
+        if clase_actualizada is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se encontro la clase"}
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a actualizado la clase", "data": clase_actualizada}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+@app.delete("/DeleteMisClase", tags=["mis_clases"])
+async def delete_mis_clase(id: int):
+    db = SessionLocal()
+    try:
+        stmt = delete(MisClases).where(MisClases.id == id).returning(MisClases)
+        result = db.execute(stmt)
+        clase_eliminada = result.scalar_one_or_none()
+        if clase_eliminada is None:
+            result.close()
+            return {"IsSuccess": False, "message": "no se encontro la clase"}
+        result.close()
+        db.commit()
+        return {"IsSuccess": True, "message": "se a eliminado la clase", "data": clase_eliminada}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()
+
+@app.get("/ProximaClase", tags=["mis_clases"])
+async def proxima_clase():
+    db = SessionLocal()
+    try:
+        ahora = datetime.now()
+        h_ahora = ahora.time()
+        dia_hoy = now_weekday_capitalized(ahora)
+        result = db.execute(select(MisClases)).scalars().all()
+        candidatas = []
+        for c in result:
+            if _normalizar_dia(c.dia) != _normalizar_dia(dia_hoy):
+                continue
+            try:
+                h = datetime.strptime(c.horario, "%H:%M").time()
+            except Exception:
+                continue
+            if h >= h_ahora:
+                candidatas.append((h, c))
+        if not candidatas:
+            return {"IsSuccess": False, "message": f"hoy ({dia_hoy}) no quedan mas clases"}
+        _, proxima = min(candidatas, key=lambda x: x[0])
+        return {"IsSuccess": True, "message": "proxima clase", "data": proxima}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+    finally:
+        db.close()

@@ -2,9 +2,13 @@ import re
 import requests
 import json
 
+from Handlers.ContextIaHandler import ContextHandler
+
 EVOLUTION_API_URL = "http://localhost:8080"
 EVOLUTION_INSTANCE = "prueba"
 EVOLUTION_APIKEY = "429683C4C977415CAAFCCE10F7D57E11"
+
+_memoria = ContextHandler()
 
 
 def _extraer_texto(message: dict) -> str:
@@ -72,7 +76,26 @@ def process_whatsapp_event(event_data: dict, handler) -> dict:
         prompt = _limpiar_mencion(texto)
         print(f"[WHATSAPP] Mensaje de {numero} ({push_name}): '{texto}' -> prompt: '{prompt}'")
 
-        respuesta = handler.run(prompt)
+        _memoria.guardar_mensaje(numero, "user", prompt)
+
+        total = _memoria.contar_mensajes(numero)
+        memoria_larga = _memoria.obtener_memoria_largoplazo(numero)
+
+        if total >= 6:
+            ultimos_6 = _memoria.obtener_historial(numero, limite=6)
+            texto_resumen = "\n".join(f"{m['rol']}: {m['contenido']}" for m in ultimos_6)
+            try:
+                resumen = handler.generate_summary(texto_resumen)
+                _memoria.actualizar_memoria_largoplazo(numero, resumen)
+                _memoria.eliminar_ultimos_n_mensajes(numero, 6)
+                memoria_larga = resumen
+                print(f"[WHATSAPP MEMORIA] Resumen generado para {numero}")
+            except Exception as e:
+                print(f"[WHATSAPP ERROR] generando resumen: {e}")
+
+        historial = _memoria.obtener_historial(numero, limite=20)
+        respuesta = handler.run(prompt, historial=historial, thread_id=numero, memoria_largoplazo=memoria_larga)
+        _memoria.guardar_mensaje(numero, "assistant", respuesta)
         print(f"[WHATSAPP] Respuesta para {numero}: '{respuesta[:100]}...'")
 
         _enviar_whatsapp(numero, respuesta)

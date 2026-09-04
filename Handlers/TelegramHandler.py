@@ -109,6 +109,7 @@ async def process_update(data: dict):
         historial = _memoria.obtener_historial(chat_id_str, limite=20)
         try:
             response = handler.run(f"{text}", historial=historial, thread_id=chat_id_str, memoria_largoplazo=memoria_larga)
+           
         except Exception as e:
             print(f"[ERROR] handler.run: {e}")
             import traceback

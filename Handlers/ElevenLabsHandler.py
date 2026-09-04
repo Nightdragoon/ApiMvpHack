@@ -9,7 +9,7 @@ class ElevenLabsHandler:
         self.api_key = os.environ.get("ELEVENLABS_APIKEY")
         self.client = ElevenLabs(api_key=self.api_key)
         self.voice_id = "weA4Q36twV5kwSaTEL0Q"  # robo voz)
-        self.output_path = "c:/audios_fromai/elevenlabs_output.mp3"
+        self.output_path = "/home/Night/github/ApiMvpHack/audios_fromai/elevenlabs_output.mp3"
 
     def generar_audio(self, text: str) -> str:
         audio_stream = self.client.text_to_speech.convert(
