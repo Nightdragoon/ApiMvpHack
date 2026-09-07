@@ -34,6 +34,7 @@ from Handlers.LangChainHandler import LangChainHandler
 from Handlers.DeepagentsHandler import DeepagentsHandler
 from Handlers.TelegramHandler import process_update, get_bot_info
 from Handlers.WhatsAppHandler import process_whatsapp_event, set_evolution_webhook
+from Handlers.ClassroomHandler import ClassroomHandler
 
 load_dotenv(".env.local")
 cliente = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -926,6 +927,18 @@ async def delete_mis_clase(id: int):
         return {"IsSuccess": False, "message": str(e)}
     finally:
         db.close()
+
+@app.get("/GetTareasPendientesClassroom", tags=["classroom"])
+async def get_tareas_pendientes_classroom():
+    try:
+        classroom = ClassroomHandler()
+        pendientes = classroom.obtener_tareas_pendientes()
+        if not pendientes:
+            return {"IsSuccess": False, "message": "no hay tareas pendientes"}
+        return {"IsSuccess": True, "message": "tareas pendientes encontradas", "data": pendientes}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
 
 @app.get("/ProximaClase", tags=["mis_clases"])
 async def proxima_clase():

@@ -25,6 +25,7 @@ from email import policy
 import imaplib2
 import base64
 from Handlers.NotionHandler import NotionHandler
+from Handlers.ClassroomHandler import ClassroomHandler
 from html.parser import HTMLParser
 import re
 
@@ -844,6 +845,20 @@ class DeepagentsHandler:
             db.close()
 
     @tool
+    def obtener_tareas_pendientes_classroom() -> str:
+        """Obtiene las tareas pendientes (sin entregar) de Google Classroom del usuario, con curso,
+        nombre de la tarea, fecha de entrega y link. Úsala cuando el usuario pregunte por sus tareas
+        pendientes, deberes o entregas de la escuela."""
+        try:
+            classroom = ClassroomHandler()
+            pendientes = classroom.obtener_tareas_pendientes()
+            if not pendientes:
+                return json.dumps({"mensaje": "No hay tareas pendientes"}, ensure_ascii=False)
+            return json.dumps(pendientes, ensure_ascii=False, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @tool
     def proxima_clase() -> str:
         """Devuelve la clase más próxima por empezar del DÍA DE HOY según la hora actual.
         Considera el día de la semana y la hora. Usala para decirle al usuario la clase que le toca hoy."""
@@ -919,7 +934,8 @@ class DeepagentsHandler:
             self.ver_todas_las_clases,
             self.actualizar_clase,
             self.borrar_clase,
-            self.proxima_clase
+            self.proxima_clase,
+            self.obtener_tareas_pendientes_classroom
         ]
 
         llm = ChatDeepSeek(
@@ -969,6 +985,9 @@ class DeepagentsHandler:
                 "Ejemplo: usuario dice 'pon la macarena' → buscar_youtube('la macarena') → reproducir_video_web(url devuelta). "
                 "También puedes controlar el frontend WebSocket directamente con reproducir_audio_web (URL de audio, segundo plano), "
                 "detener_media (detiene video/audio activo) y redirigir_pestana (abre URL en pestaña, requiere clic previo en 'Redirección'). "
+                "También puedes revisar las tareas pendientes de Google Classroom con "
+                "obtener_tareas_pendientes_classroom, que devuelve curso, tarea, fecha de entrega y link. "
+                "Úsala cuando el usuario pregunte por sus tareas, deberes o entregas pendientes de la escuela. "
                 "NUNCA digas que eres V, N u otro personaje. Siempre respondes como Uzi. "
             )
         )
