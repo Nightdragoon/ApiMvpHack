@@ -26,6 +26,7 @@ import imaplib2
 import base64
 from Handlers.NotionHandler import NotionHandler
 from Handlers.ClassroomHandler import ClassroomHandler
+from Handlers.CalendarHandler import CalendarHandler
 from html.parser import HTMLParser
 import re
 
@@ -859,6 +860,31 @@ class DeepagentsHandler:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @tool
+    def obtener_proximos_eventos_calendar(max_resultados: int = 10) -> str:
+        """Obtiene los próximos eventos del Google Calendar del usuario (título, inicio, fin, link).
+        Úsala cuando el usuario pregunte qué tiene agendado, sus próximos eventos o su calendario."""
+        try:
+            calendar = CalendarHandler()
+            eventos = calendar.listar_proximos_eventos(max_resultados)
+            if not eventos:
+                return json.dumps({"mensaje": "No hay eventos próximos"}, ensure_ascii=False)
+            return json.dumps(eventos, ensure_ascii=False, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @tool
+    def crear_evento_calendar(titulo: str, inicio_iso: str, fin_iso: str, descripcion: str = "") -> str:
+        """Crea un evento en el Google Calendar del usuario. inicio_iso y fin_iso deben ir en formato
+        ISO 8601 sin zona horaria, p. ej. '2026-09-10T15:00:00'. Úsala cuando el usuario pida agendar,
+        programar o crear un evento/junta/cita."""
+        try:
+            calendar = CalendarHandler()
+            creado = calendar.crear_evento(titulo, inicio_iso, fin_iso, descripcion)
+            return json.dumps(creado, ensure_ascii=False, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @tool
     def proxima_clase() -> str:
         """Devuelve la clase más próxima por empezar del DÍA DE HOY según la hora actual.
         Considera el día de la semana y la hora. Usala para decirle al usuario la clase que le toca hoy."""
@@ -935,7 +961,9 @@ class DeepagentsHandler:
             self.actualizar_clase,
             self.borrar_clase,
             self.proxima_clase,
-            self.obtener_tareas_pendientes_classroom
+            self.obtener_tareas_pendientes_classroom,
+            self.obtener_proximos_eventos_calendar,
+            self.crear_evento_calendar
         ]
 
         llm = ChatDeepSeek(
@@ -988,6 +1016,9 @@ class DeepagentsHandler:
                 "También puedes revisar las tareas pendientes de Google Classroom con "
                 "obtener_tareas_pendientes_classroom, que devuelve curso, tarea, fecha de entrega y link. "
                 "Úsala cuando el usuario pregunte por sus tareas, deberes o entregas pendientes de la escuela. "
+                "También manejas Google Calendar: obtener_proximos_eventos_calendar para ver lo que tiene "
+                "agendado, y crear_evento_calendar (titulo, inicio_iso, fin_iso en formato '2026-09-10T15:00:00', "
+                "descripcion opcional) cuando te pida agendar, programar o crear un evento/junta/cita. "
                 "NUNCA digas que eres V, N u otro personaje. Siempre respondes como Uzi. "
             )
         )

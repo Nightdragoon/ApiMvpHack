@@ -35,6 +35,8 @@ from Handlers.DeepagentsHandler import DeepagentsHandler
 from Handlers.TelegramHandler import process_update, get_bot_info
 from Handlers.WhatsAppHandler import process_whatsapp_event, set_evolution_webhook
 from Handlers.ClassroomHandler import ClassroomHandler
+from Handlers.CalendarHandler import CalendarHandler
+from Dtos.CrearEventoCalendarDto import CrearEventoCalendarDto
 
 load_dotenv(".env.local")
 cliente = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -936,6 +938,30 @@ async def get_tareas_pendientes_classroom():
         if not pendientes:
             return {"IsSuccess": False, "message": "no hay tareas pendientes"}
         return {"IsSuccess": True, "message": "tareas pendientes encontradas", "data": pendientes}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
+
+@app.get("/GetProximosEventosCalendar", tags=["calendar"])
+async def get_proximos_eventos_calendar(max_resultados: int = 10):
+    try:
+        calendar = CalendarHandler()
+        eventos = calendar.listar_proximos_eventos(max_resultados)
+        if not eventos:
+            return {"IsSuccess": False, "message": "no hay eventos próximos"}
+        return {"IsSuccess": True, "message": "eventos encontrados", "data": eventos}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
+
+@app.post("/CrearEventoCalendar", tags=["calendar"])
+async def post_crear_evento_calendar(evento: CrearEventoCalendarDto):
+    try:
+        calendar = CalendarHandler()
+        creado = calendar.crear_evento(
+            evento.titulo, evento.inicio_iso, evento.fin_iso, evento.descripcion, evento.zona_horaria
+        )
+        return {"IsSuccess": True, "message": "evento creado", "data": creado}
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
 
