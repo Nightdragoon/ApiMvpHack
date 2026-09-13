@@ -1,12 +1,13 @@
 import json
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import sessionmaker, Session
 from fastapi import FastAPI , Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.params import Query
-from sqlalchemy import create_engine , select , update , delete , insert , func
+from sqlalchemy import create_engine , select , update , delete , insert , func, text
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker
 from starlette.responses import JSONResponse
@@ -20,8 +21,9 @@ from Dtos.UpdateEmpleadoDto import UpdateEmpleadoDto
 from Dtos.CrearCajaDto import CrearCajaDto
 from Dtos.UpdateCajaDto import UpdateCajaDto
 from Dtos.CrearMisClaseDto import MisClaseDto
+from Dtos.CrearPaginaDto import CrearPaginaDto
 from typing import Optional
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from google import genai  # <--- Nueva forma de importarfrom dotenv import load_dotenv
 import os
 import io
@@ -35,6 +37,7 @@ from Handlers.DeepagentsHandler import DeepagentsHandler
 from Handlers.TelegramHandler import process_update, get_bot_info
 from Handlers.WhatsAppHandler import process_whatsapp_event, set_evolution_webhook
 from Handlers.ClassroomHandler import ClassroomHandler
+from Handlers.SlaveServerHandler import get_slave_server
 from Handlers.CalendarHandler import CalendarHandler
 from Dtos.CrearEventoCalendarDto import CrearEventoCalendarDto
 
@@ -52,6 +55,16 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Empleado = Base.classes.Empleados
 Caja = Base.classes.Caja
 app = FastAPI(title="CRUD Producto & Inventario")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+PaginaRenderizada = Base.classes.pagina_renderizada
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request: Request, exc: RequestValidationError):
@@ -361,6 +374,7 @@ class Emocion(BaseModel):
 
 conexiones_activas: list[WebSocket] = []
 ultimo_estado: dict | None = None
+conexiones_pagina: list[WebSocket] = []
 
 
 @app.websocket("/ws")
@@ -376,6 +390,23 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         conexiones_activas.remove(websocket)
+
+
+@app.websocket("/ws-pagina")
+async def websocket_pagina(websocket: WebSocket):
+    await websocket.accept()
+    conexiones_pagina.append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        conexiones_pagina.remove(websocket)
+
+
+@app.websocket("/ws-esclavo")
+async def websocket_esclavo(websocket: WebSocket):
+    server = get_slave_server()
+    await server.handle(websocket)
 
 
 @app.post("/webhook", tags=["emotion-server"])
@@ -989,6 +1020,64 @@ async def proxima_clase():
         _, proxima = min(candidatas, key=lambda x: x[0])
         return {"IsSuccess": True, "message": "proxima clase", "data": proxima}
     except Exception as e:
+        return {"IsSuccess": False, "message": f"hoy ({dia_hoy}) no quedan mas clases"}
+    finally:
+        db.close()
+
+
+@app.get("/pagina", response_class=HTMLResponse, tags=["pagina"])
+async def obtener_pagina():
+    db = SessionLocal()
+    try:
+        row = db.execute(select(PaginaRenderizada).where(PaginaRenderizada.id == 1)).scalar_one_or_none()
+        if row is None or not row.html_content:
+            return "<html><body><h1>Aún no hay página generada</h1><p>Pídele a Uzi que genere una página.</p></body></html>"
+        html = row.html_content
+        ws_script = """<script>
+(function(){
+    fetch('/pagina').then(function(r){return r.text()}).then(function(t){
+        document.open(); document.write(t); document.close();
+    }).catch(function(){});
+    var ws = new WebSocket('wss://' + location.host + '/ws-pagina');
+    ws.onmessage = function(e) {
+        var d = JSON.parse(e.data);
+        if (d.type === 'pagina') {
+            document.open(); document.write(d.html); document.close();
+        }
+    };
+    ws.onclose = function() {
+        setInterval(function(){
+            fetch('/pagina').then(function(r){return r.text()}).then(function(t){
+                var n = btoa(t.slice(0,500));
+                if (localStorage.getItem('pz') && n !== localStorage.getItem('pz')) location.reload();
+                localStorage.setItem('pz', n);
+            }).catch(function(){});
+        }, 30000);
+    };
+})();
+</script>"""
+        injected = html.replace("</head>", ws_script + "</head>") if "</head>" in html else html.replace("<body", ws_script + "<body")
+        return injected
+    finally:
+        db.close()
+
+
+@app.post("/pagina", tags=["pagina"])
+async def crear_o_actualizar_pagina(dto: CrearPaginaDto):
+    if not dto.html_content or not dto.html_content.strip():
+        return {"IsSuccess": False, "message": "html_content no puede estar vacío"}
+    db = SessionLocal()
+    try:
+        db.execute(
+            text("INSERT OR REPLACE INTO pagina_renderizada (id, titulo, html_content, actualizado) VALUES (1, :titulo, :html_content, :actualizado)"),
+            {"titulo": dto.titulo, "html_content": dto.html_content, "actualizado": datetime.now().isoformat()}
+        )
+        db.commit()
+        for ws in conexiones_pagina:
+            await ws.send_json({"type": "pagina", "titulo": dto.titulo, "html": dto.html_content})
+        return {"IsSuccess": True, "message": "Página guardada", "titulo": dto.titulo}
+    except Exception as e:
+        db.rollback()
         return {"IsSuccess": False, "message": str(e)}
     finally:
         db.close()

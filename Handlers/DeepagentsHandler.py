@@ -13,6 +13,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState, START
 from langgraph.prebuilt import ToolNode, tools_condition
 import subprocess
+from Handlers.SlaveTools import pcs_conectadas, enviar_a_pc, enviar_a_todas
+from Handlers.DbCrudHandler import (
+    ejecutar_sql, listar_tablas, describir_tabla, crear_tabla, borrar_tabla,
+)
 import requests
 from sqlalchemy import create_engine, select, insert, update, delete
 from sqlalchemy.orm import sessionmaker
@@ -521,7 +525,12 @@ class DeepagentsHandler:
         'fastfetch', 'ls', 'echo hola', 'uname -a', 'pwd', etc.
         Recibe el comando como una sola cadena de texto. El comando corre en el servidor real
         donde está desplegado el bot (Linux/Fedora), no en Windows.
+        NO uses esta herramienta para hacer curl o wget al servidor local (localhost, 127.0.0.1).
+        Para obtener información del servidor local, usa las herramientas de API/REST disponibles.
         """
+        import re
+        if re.search(r'(curl|wget)\s+.*(localhost|127\.0\.0\.1|0\.0\.0\.0)', comando, re.IGNORECASE):
+            return "Error: No puedes hacer curl/wget al servidor local. Usa las herramientas disponibles del agente."
         result = subprocess.run(f"{comando}", shell=True , capture_output=True,
             text=True,
             timeout=30, )
@@ -666,6 +675,27 @@ class DeepagentsHandler:
         mensaje es el texto de la respuesta que va a dar."""
         EmotionServerHandler().enviar(emotion, mensaje)
         return json.dumps({"emotion_registrada": emotion}, ensure_ascii=False)
+
+    @tool
+    def render_html(titulo: str, html_content: str) -> str:
+        """Envía HTML arbitrario al endpoint /pagina para renderizar.
+        Genera código HTML completo (documento con <html>, <head>, <body>).
+        Usa Tailwind, Bootstrap, o las librerías que quieras via CDN.
+        El usuario verá el resultado en https://uzinightbot.stemfesc.com.mx/pagina"""
+        import requests
+        if not html_content or not html_content.strip():
+            return json.dumps({"error": "html_content no puede estar vacío"}, ensure_ascii=False)
+        try:
+            resp = requests.post(
+                "http://127.0.0.1:8001/pagina",
+                json={"titulo": titulo, "html_content": html_content},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return json.dumps({"message": f"Página '{titulo}' renderizada en /pagina"}, ensure_ascii=False)
+            return json.dumps({"error": f"Error {resp.status_code}: {resp.text}"}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @tool
     def reproducir_video_web(url: str) -> str:
@@ -951,6 +981,7 @@ class DeepagentsHandler:
             self.leer_pagina_web,
             self.buscar_en_internet,
             self.registrar_emotion,
+            self.render_html,
             self.reproducir_video_web,
             self.reproducir_audio_web,
             self.detener_media,
@@ -963,7 +994,15 @@ class DeepagentsHandler:
             self.proxima_clase,
             self.obtener_tareas_pendientes_classroom,
             self.obtener_proximos_eventos_calendar,
-            self.crear_evento_calendar
+            self.crear_evento_calendar,
+            pcs_conectadas,
+            enviar_a_pc,
+            enviar_a_todas,
+            ejecutar_sql,
+            listar_tablas,
+            describir_tabla,
+            crear_tabla,
+            borrar_tabla,
         ]
 
         llm = ChatDeepSeek(
@@ -1013,13 +1052,57 @@ class DeepagentsHandler:
                 "Ejemplo: usuario dice 'pon la macarena' → buscar_youtube('la macarena') → reproducir_video_web(url devuelta). "
                 "También puedes controlar el frontend WebSocket directamente con reproducir_audio_web (URL de audio, segundo plano), "
                 "detener_media (detiene video/audio activo) y redirigir_pestana (abre URL en pestaña, requiere clic previo en 'Redirección'). "
+                "Para renderizar una página web visual, usa render_html(titulo, html_content) con HTML completo "
+                "(puede incluir Tailwind, Bootstrap, o cualquier librería via CDN). "
+                "El resultado se ve en https://uzinightbot.stemfesc.com.mx/pagina. "
                 "También puedes revisar las tareas pendientes de Google Classroom con "
                 "obtener_tareas_pendientes_classroom, que devuelve curso, tarea, fecha de entrega y link. "
                 "Úsala cuando el usuario pregunte por sus tareas, deberes o entregas pendientes de la escuela. "
                 "También manejas Google Calendar: obtener_proximos_eventos_calendar para ver lo que tiene "
                 "agendado, y crear_evento_calendar (titulo, inicio_iso, fin_iso en formato '2026-09-10T15:00:00', "
                 "descripcion opcional) cuando te pida agendar, programar o crear un evento/junta/cita. "
+                "Puedes leer correos de la cuenta Gmail con leer_emails (devuelve los últimos emails con remitente, asunto y body). "
+                "Puedes enviar emails con enviar_email(destinatario, asunto, mensaje). "
                 "NUNCA digas que eres V, N u otro personaje. Siempre respondes como Uzi. "
+
+                "FLUJOS COMBINADOS CON render_html: "
+                "render_html(titulo, html_content) genera una página visual en https://uzinightbot.stemfesc.com.mx/pagina. "
+                "Usa este poder para combinar herramientas y mostrar resultados visuales: "
+                "- Si el usuario pide 'mis correos en una tabla': leer_emails() → construir HTML con los datos → render_html('Correos', html) "
+                "- Si pide 'mis tareas en cards': obtener_tareas_pendientes_classroom() → construir HTML con Bootstrap/Tailwind cards → render_html('Tareas', html) "
+                "- Si pide 'mi calendario en tabla': obtener_proximos_eventos_calendar() → construir HTML con tabla → render_html('Calendario', html) "
+                "- Si pide 'mis clases en horario': ver_todas_las_clases() → construir HTML con tabla/grid → render_html('Horario', html) "
+                "- Si pide 'mis contactos en lista': obtener_todos_contactos() → construir HTML con tabla → render_html('Contactos', html) "
+                "- Si pide 'mis productos en dashboard': obtener_productos() → construir HTML con cards → render_html('Productos', html) "
+                "- Si pide 'resumen de emails': leer_emails() → construir HTML con resumen por remitente → render_html('Resumen Emails', html) "
+                "El HTML puede usar Tailwind CSS (CDN), Bootstrap Icons (CDN), Bootstrap o cualquier librería via CDN. "
+                "Cuando el usuario pida ver información de forma visual, siempre considera usar render_html después de obtener los datos con la tool correspondiente. "
+
+                "## Control de PCs esclavas\n"
+                "Tienes acceso a computadoras remotas (esclavas) conectadas por WebSocket. "
+                "Usa pcs_conectadas para listar qué PCs están online (muestra número, hostname, platform y estado). "
+                "Para enviar un comando a una PC específica, usa enviar_a_pc(numero_pc, accion, params). "
+                "Ejemplo: usuario dice 'en la PC 1 abre YouTube Music con bad bunny' → enviar_a_pc(1, 'open_youtube_music', {'query': 'bad bunny'}). "
+                "Para enviar el mismo comando a todas las PCs conectadas, usa enviar_a_todas(accion, params). "
+                "Catálogo de acciones disponibles en los esclavos: ping, info, open_url, open_youtube, open_youtube_music, open_app, type_text, press_keys, press_key, media, mouse_move, mouse_click, window, screenshot, run. "
+                "Si la PC no está conectada, la tool retorna un error legible. "
+                "IMPORTANTE: antes de enviar un comando a una PC, verifica que esté conectada usando pcs_conectadas. "
+
+                "## Base de datos ProyectDb\n"
+                "Tienes control total sobre la base de datos ProyectDb.db (SQLite). "
+                "Usa estas herramientas genericas para manage la DB:\n"
+                "- listar_tablas(): Muestra todas las tablas y sus columnas. Siempre usa esto primero para descubrir qué hay.\n"
+                "- describir_tabla(nombre): Muestra schema completo de una tabla (columnas, tipos, defaults).\n"
+                "- ejecutar_sql(query): Ejecuta SQL directo. Ejemplos:\n"
+                "  'SELECT * FROM Producto LIMIT 10'\n"
+                "  'INSERT INTO Producto (nombre, precio, activo) VALUES (\"cafe\", 50.0, 1)'\n"
+                "  'UPDATE Producto SET precio = 100 WHERE id = 5'\n"
+                "  'DELETE FROM Producto WHERE id = 3'\n"
+                "  'CREATE TABLE tareas (id INTEGER PRIMARY KEY, titulo TEXT NOT NULL, prioridad INTEGER DEFAULT 1)'\n"
+                "  'DROP TABLE tareas'\n"
+                "- crear_tabla(nombre, columnas): Crea tabla. Ej: crear_tabla('tareas', {'id': 'INTEGER PRIMARY KEY', 'titulo': 'TEXT', 'prioridad': 'INTEGER'})\n"
+                "- borrar_tabla(nombre): Elimina tabla completa (WARNING: irreversible).\n"
+                "IMPORTANTE: usa describir_tabla antes de ejecutar SQL para conocer los nombres exactos de columnas. "
             )
         )
 

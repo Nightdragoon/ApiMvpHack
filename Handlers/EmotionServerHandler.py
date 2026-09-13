@@ -1,4 +1,5 @@
 import os
+import threading
 
 import requests
 from dotenv import load_dotenv
@@ -15,11 +16,14 @@ class EmotionServerHandler:
     def enviar(self, emotion: str, text: str) -> None:
         if emotion not in EMOCIONES_SOPORTADAS:
             emotion = "neutral"
+        threading.Thread(target=self._enviar_bg, args=(emotion, text), daemon=True).start()
+
+    def _enviar_bg(self, emotion: str, text: str) -> None:
         try:
             requests.post(
                 self.webhook_url,
                 json={"emotion": emotion, "text": text},
-                timeout=2,
+                timeout=5,
             )
         except Exception as e:
             print(f"[EMOTION SERVER] no se pudo enviar la emocion: {e}")
