@@ -17,9 +17,15 @@ class SlaveServerHandler:
         self.agent_id_por_numero: dict[int, str] = {}
         self.next_numero: int = 1
         self._close_events: dict[str, asyncio.Event] = {}
+        # Referencia al event loop principal (donde viven los WebSockets).
+        # Las tools del modelo corren en otro hilo y necesitan agendar el
+        # send aqui via run_coroutine_threadsafe, no crear un loop nuevo.
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def handle(self, ws: "WebSocket"):
         await ws.accept()
+        # Capturamos el loop principal en la primera conexion.
+        self.loop = asyncio.get_running_loop()
         try:
             hello_raw = await ws.receive_text()
         except Exception as e:

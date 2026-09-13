@@ -78,6 +78,24 @@ async def _enviar_a_todas_async(accion: str, params: Optional[dict]) -> str:
     return resultado
 
 
+def _ejecutar_en_loop_del_servidor(coro):
+    """Ejecuta una corrutina en el event loop principal del servidor.
+
+    Las tools del modelo corren en un hilo aparte. El WebSocket vive en el
+    loop principal, asi que NO podemos usar asyncio.run() (crearia un loop
+    nuevo y el send cruzaria event loops, corrompiendo el socket). En su
+    lugar agendamos la corrutina en el loop principal y esperamos el
+    resultado desde este hilo.
+    """
+    server = get_slave_server()
+    loop = server.loop
+    if loop is not None and loop.is_running():
+        fut = asyncio.run_coroutine_threadsafe(coro, loop)
+        return fut.result(timeout=35)
+    # Fallback: no hay loop del servidor todavia (ninguna PC conectada aun).
+    return asyncio.run(coro)
+
+
 def enviar_a_pc(numero_pc: int, accion: str, params: Optional[dict] = None) -> str:
     r"""Envía un comando a una PC esclava específica por su número y regresa inmediatamente.
 
@@ -89,7 +107,7 @@ def enviar_a_pc(numero_pc: int, accion: str, params: Optional[dict] = None) -> s
     Usa esta herramienta cuando el usuario indique a cuál PC específica quiere enviar un comando.
     El comando se envía y la herramienta regresa inmediatamente — no espera confirmación del esclavo.
     """
-    return asyncio.run(_enviar_a_pc_async(numero_pc, accion, params))
+    return _ejecutar_en_loop_del_servidor(_enviar_a_pc_async(numero_pc, accion, params))
 
 
 def enviar_a_todas(accion: str, params: Optional[dict] = None) -> str:
@@ -103,4 +121,4 @@ def enviar_a_todas(accion: str, params: Optional[dict] = None) -> str:
     (ej: 'abrir undertale en todas', 'tomar screenshot de todas').
     El comando se envía a todas y la herramienta regresa inmediatamente — no espera confirmación.
     """
-    return asyncio.run(_enviar_a_todas_async(accion, params))
+    return _ejecutar_en_loop_del_servidor(_enviar_a_todas_async(accion, params))
