@@ -1,4 +1,5 @@
 import os
+import asyncio
 from telegram import Bot
 from dotenv import load_dotenv
 from Handlers.DeepagentsHandler import DeepagentsHandler
@@ -98,7 +99,7 @@ async def process_update(data: dict):
             ultimos_6 = _memoria.obtener_historial(chat_id_str, limite=6)
             texto_resumen = "\n".join(f"{m['rol']}: {m['contenido']}" for m in ultimos_6)
             try:
-                resumen = handler.generate_summary(texto_resumen)
+                resumen = await asyncio.to_thread(handler.generate_summary, texto_resumen)
                 _memoria.actualizar_memoria_largoplazo(chat_id_str, resumen)
                 _memoria.eliminar_ultimos_n_mensajes(chat_id_str, 6)
                 memoria_larga = resumen
@@ -108,8 +109,15 @@ async def process_update(data: dict):
 
         historial = _memoria.obtener_historial(chat_id_str, limite=20)
         try:
-            response = handler.run(f"{text}", historial=historial, thread_id=chat_id_str, memoria_largoplazo=memoria_larga)
-           
+            # Corremos el agente (sincrono, con llamadas al LLM y a las tools)
+            # en un hilo aparte para NO bloquear el event loop principal.
+            # Si se bloqueara, el server no podria aceptar conexiones de los
+            # esclavos ni resolver el run_coroutine_threadsafe de las tools.
+            response = await asyncio.to_thread(
+                handler.run, f"{text}",
+                historial=historial, thread_id=chat_id_str, memoria_largoplazo=memoria_larga
+            )
+
         except Exception as e:
             print(f"[ERROR] handler.run: {e}")
             import traceback

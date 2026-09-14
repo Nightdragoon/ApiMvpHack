@@ -89,14 +89,29 @@ def _ejecutar_en_loop_del_servidor(coro):
     """
     server = get_slave_server()
     loop = server.loop
-    if loop is not None and loop.is_running():
-        fut = asyncio.run_coroutine_threadsafe(coro, loop)
-        try:
-            return fut.result(timeout=35)
-        except TimeoutError:
-            return "El comando se envió pero la PC no respondió a tiempo (timeout 35s)."
-    # Fallback: no hay loop del servidor todavia (ninguna PC conectada aun).
-    return asyncio.run(coro)
+
+    # Si NO hay loop del servidor todavia, corremos la corrutina en uno propio.
+    if loop is None or not loop.is_running():
+        return asyncio.run(coro)
+
+    # Red de seguridad: si por alguna razon estamos corriendo DENTRO del hilo
+    # del loop del servidor, bloquear con fut.result() lo congelaria (deadlock)
+    # y el server dejaria de aceptar conexiones. En ese caso agendamos el envio
+    # sin esperar el resultado (fire-and-forget real).
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        loop.create_task(coro)
+        return "Comando enviado a la PC (encolado en el servidor)."
+
+    # Caso normal: estamos en un hilo worker → es seguro esperar el resultado.
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+    try:
+        return fut.result(timeout=35)
+    except TimeoutError:
+        return "El comando se envió pero la PC no respondió a tiempo (timeout 35s)."
 
 
 def enviar_a_pc(numero_pc: int, accion: str, params: Optional[dict] = None) -> str:
