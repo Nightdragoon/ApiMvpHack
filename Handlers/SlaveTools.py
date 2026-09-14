@@ -91,7 +91,10 @@ def _ejecutar_en_loop_del_servidor(coro):
     loop = server.loop
     if loop is not None and loop.is_running():
         fut = asyncio.run_coroutine_threadsafe(coro, loop)
-        return fut.result(timeout=35)
+        try:
+            return fut.result(timeout=35)
+        except TimeoutError:
+            return "El comando se envió pero la PC no respondió a tiempo (timeout 35s)."
     # Fallback: no hay loop del servidor todavia (ninguna PC conectada aun).
     return asyncio.run(coro)
 

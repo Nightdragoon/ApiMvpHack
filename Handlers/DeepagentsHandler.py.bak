@@ -332,7 +332,7 @@ class DeepagentsHandler:
         Devuelve la URL de YouTube lista para enviar al frontend con reproducir_video_web."""
         try:
             result = subprocess.run(
-                ["/home/Night/.local/bin/yt-dlp", "--print", "webpage_url", f"ytsearch:{query}", "--max-downloads", "1"],
+                ["yt-dlp", "--print", "webpage_url", f"ytsearch:{query}", "--max-downloads", "1"],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -356,7 +356,7 @@ class DeepagentsHandler:
             numero_pc: El número de PC donde reproducir (1, 2, 3...) según pcs_conectadas."""
         try:
             result = subprocess.run(
-                ["/home/Night/.local/bin/yt-dlp", "--print", "webpage_url", f"ytsearch:{query}", "--max-downloads", "1"],
+                ["yt-dlp", "--print", "webpage_url", f"ytsearch:{query}", "--max-downloads", "1"],
                 capture_output=True, text=True, timeout=30,
             )
             lines = [l.strip() for l in result.stdout.splitlines() if l.strip() and l.startswith("http")]
