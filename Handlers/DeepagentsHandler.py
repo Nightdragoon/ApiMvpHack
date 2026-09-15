@@ -557,10 +557,12 @@ class DeepagentsHandler:
         import re
         if re.search(r'(curl|wget)\s+.*(localhost|127\.0\.0\.1|0\.0\.0\.0)', comando, re.IGNORECASE):
             return "Error: No puedes hacer curl/wget al servidor local. Usa las herramientas disponibles del agente."
-        result = subprocess.run(f"{comando}", shell=True , capture_output=True,
-            text=True,
-            timeout=30, )
-        return result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+        try:
+            result = subprocess.run(f"{comando}", shell=True, capture_output=True,
+                text=True, timeout=10)
+            return result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+        except subprocess.TimeoutExpired:
+            return f"Error: el comando tardó más de 10 segundos y fue cancelado. Comando: {comando}"
     
     
     @tool
@@ -1037,7 +1039,7 @@ class DeepagentsHandler:
             api_key=self.deepseek_api_key,
             temperature=0,
             max_retries=2,
-            request_timeout=60,
+            request_timeout=30,
         ).bind_tools(tools)
 
         llm_emotion = ChatDeepSeek(
@@ -1045,7 +1047,7 @@ class DeepagentsHandler:
             api_key=self.deepseek_api_key,
             temperature=0,
             max_retries=2,
-            request_timeout=60,
+            request_timeout=30,
         ).bind_tools(tools, tool_choice="registrar_emotion")
 
         sys_msg = SystemMessage(
