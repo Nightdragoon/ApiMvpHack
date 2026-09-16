@@ -13,7 +13,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState, START
 from langgraph.prebuilt import ToolNode, tools_condition
 import subprocess
-from Handlers.SlaveTools import pcs_conectadas, enviar_a_pc, enviar_a_todas
+from Handlers.SlaveTools import ejecutar_claude_en_pc, pcs_conectadas, enviar_a_pc, enviar_a_todas, verificar_claude_en_pc
 from Handlers.DbCrudHandler import (
     ejecutar_sql, listar_tablas, describir_tabla, crear_tabla, borrar_tabla,
 )
@@ -1032,6 +1032,11 @@ class DeepagentsHandler:
             describir_tabla,
             crear_tabla,
             borrar_tabla,
+             pcs_conectadas,
+            enviar_a_pc,
+            enviar_a_todas,
+            verificar_claude_en_pc,
+            ejecutar_claude_en_pc,
         ]
 
         llm = ChatDeepSeek(
@@ -1132,6 +1137,19 @@ class DeepagentsHandler:
                 "- window: params {'op': 'minimize', 'title': 'YouTube'} (op: list/activate/minimize/maximize/close; 'title' obligatorio salvo en 'list')\n"
                 "- screenshot: params {} (captura de pantalla PNG en base64)\n"
                 "- run: params {'command': 'echo hola'} (shell; puede estar deshabilitado en el esclavo)\n"
+                "- check_claude: params {} (dice si la PC tiene Claude Code instalado, ruta y version)\n"
+                "- claude_run: params {'prompt': 'la tarea'} (ejecuta una tarea con Claude Code en la PC)\n"
+                "## Claude Code en las PCs esclavas\n"
+                "Algunas PCs tienen Claude Code (la CLI). Para saber si una PC lo tiene usa "
+                "verificar_claude_en_pc(numero_pc) — a diferencia de enviar_a_pc, ESTA SI espera y "
+                "devuelve la respuesta del esclavo (instalado, ruta, version). "
+                "Para que Claude realice una tarea en una PC usa ejecutar_claude_en_pc(numero_pc, prompt) "
+                "que tambien espera y devuelve la salida de Claude. "
+                "Ejemplos: usuario dice 'la PC 1 tiene claude?' → verificar_claude_en_pc(1). "
+                "'dile a claude en la PC 1 que cree un archivo hola.txt' → "
+                "ejecutar_claude_en_pc(1, 'crea un archivo hola.txt'). "
+                "Antes de mandar una tarea con ejecutar_claude_en_pc, conviene confirmar con "
+                "verificar_claude_en_pc que la PC tenga Claude instalado. "
                 "IMPORTANTE para reproducir un VIDEO concreto en una PC: si ya tienes la URL del video "
                 "(por ejemplo de buscar_youtube), usa open_url con esa URL exacta, NO open_youtube. "
                 "open_youtube sin 'url' solo abre la pagina de YouTube o una busqueda. "

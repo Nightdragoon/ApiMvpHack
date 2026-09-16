@@ -49,6 +49,34 @@ async def _enviar_a_pc_async(numero_pc: int, accion: str, params: Optional[dict]
         return f"Error: No se pudo enviar a PC {numero_pc}."
 
 
+async def _enviar_a_pc_con_respuesta_async(numero_pc: int, accion: str, params: Optional[dict], timeout: float) -> str:
+    server = get_slave_server()
+    agent_id = server.get_agent_id_por_numero(numero_pc)
+
+    if not agent_id:
+        return f"Error: PC {numero_pc} no existe o nunca se ha conectado."
+
+    if agent_id not in server.agents:
+        info = server.agent_info.get(agent_id, {})
+        hostname = info.get("hostname", "?")
+        return f"Error: PC {numero_pc} ({hostname}) esta desconectada."
+
+    try:
+        resultado = await server.send_command(agent_id, accion, params, timeout=timeout)
+    except asyncio.TimeoutError:
+        return f"Error: PC {numero_pc} no respondio en {timeout}s."
+    except Exception as e:
+        return f"Error enviando a PC {numero_pc}: {e}"
+
+    status = resultado.get("status")
+    payload = resultado.get("result")
+    info = server.agent_info.get(agent_id, {})
+    hostname = info.get("hostname", f"PC {numero_pc}")
+    if status == "ok":
+        return f"PC {numero_pc} ({hostname}) — OK: {payload}"
+    return f"PC {numero_pc} ({hostname}) — ERROR: {payload}"
+
+
 async def _enviar_a_todas_async(accion: str, params: Optional[dict]) -> str:
     server = get_slave_server()
     agents = list(server.agents.keys())
@@ -78,7 +106,7 @@ async def _enviar_a_todas_async(accion: str, params: Optional[dict]) -> str:
     return resultado
 
 
-def _ejecutar_en_loop_del_servidor(coro):
+def _ejecutar_en_loop_del_servidor(coro, wait_timeout: float = 35):
     """Ejecuta una corrutina en el event loop principal del servidor.
 
     Las tools del modelo corren en un hilo aparte. El WebSocket vive en el
@@ -86,6 +114,9 @@ def _ejecutar_en_loop_del_servidor(coro):
     nuevo y el send cruzaria event loops, corrompiendo el socket). En su
     lugar agendamos la corrutina en el loop principal y esperamos el
     resultado desde este hilo.
+
+    wait_timeout: segundos que este hilo espera el resultado. Subelo para
+    acciones que tardan (p. ej. claude_run puede tomar minutos).
     """
     server = get_slave_server()
     loop = server.loop
@@ -109,9 +140,9 @@ def _ejecutar_en_loop_del_servidor(coro):
     # Caso normal: estamos en un hilo worker → es seguro esperar el resultado.
     fut = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
-        return fut.result(timeout=35)
+        return fut.result(timeout=wait_timeout)
     except TimeoutError:
-        return "El comando se envió pero la PC no respondió a tiempo (timeout 35s)."
+        return f"El comando se envió pero la PC no respondió a tiempo (timeout {wait_timeout:g}s)."
 
 
 def enviar_a_pc(numero_pc: int, accion: str, params: Optional[dict] = None) -> str:
@@ -140,3 +171,39 @@ def enviar_a_todas(accion: str, params: Optional[dict] = None) -> str:
     El comando se envía a todas y la herramienta regresa inmediatamente — no espera confirmación.
     """
     return _ejecutar_en_loop_del_servidor(_enviar_a_todas_async(accion, params))
+
+def verificar_claude_en_pc(numero_pc: int) -> str:
+    r"""Comprueba si una PC esclava tiene Claude Code instalado."""
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, "check_claude", {}, 30),
+        wait_timeout=40,
+    )
+
+
+def ejecutar_claude_en_pc(numero_pc: int, prompt: str, skip_permissions: bool = False, timeout: float = 300) -> str:
+    r"""Le dicta una tarea a Claude Code en una PC esclava y espera su salida."""
+    params = {"prompt": prompt, "timeout": timeout}
+    if skip_permissions:
+        params["skip_permissions"] = True
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, "claude_run", params, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+def verificar_claude_en_pc(numero_pc: int) -> str:
+    r"""Comprueba si una PC esclava tiene Claude Code instalado."""
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, "check_claude", {}, 30),
+        wait_timeout=40,
+    )
+
+
+def ejecutar_claude_en_pc(numero_pc: int, prompt: str, skip_permissions: bool = False, timeout: float = 300) -> str:
+    r"""Le dicta una tarea a Claude Code en una PC esclava y espera su salida."""
+    params = {"prompt": prompt, "timeout": timeout}
+    if skip_permissions:
+        params["skip_permissions"] = True
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, "claude_run", params, timeout),
+        wait_timeout=timeout + 15,
+    )
