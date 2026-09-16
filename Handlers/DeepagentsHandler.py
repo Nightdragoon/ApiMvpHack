@@ -1032,9 +1032,6 @@ class DeepagentsHandler:
             describir_tabla,
             crear_tabla,
             borrar_tabla,
-             pcs_conectadas,
-            enviar_a_pc,
-            enviar_a_todas,
             verificar_claude_en_pc,
             ejecutar_claude_en_pc,
         ]
