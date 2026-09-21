@@ -1033,23 +1033,47 @@ async def obtener_pagina():
         if row is None or not row.html_content:
             return "<html><body><h1>Aún no hay página generada</h1><p>Pídele a Uzi que genere una página.</p></body></html>"
         html = row.html_content
+        container_id = "pagina-contenido"
         ws_script = """<script>
 (function(){
+    var cid = 'pagina-contenido';
+    function setContent(html) {
+        var el = document.getElementById(cid);
+        if (el) { el.innerHTML = html; return true; }
+        return false;
+    }
+    function applyHtml(raw) {
+        if (!raw || !raw.trim()) return;
+        var tmp = document.createElement('div');
+        tmp.innerHTML = raw;
+        var bodyContent = tmp.querySelector('body') ? tmp.querySelector('body').innerHTML : raw;
+        setContent(bodyContent);
+    }
     fetch('/pagina').then(function(r){return r.text()}).then(function(t){
-        document.open(); document.write(t); document.close();
+        var m = t.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+        applyHtml(m ? m[1] : t);
     }).catch(function(){});
     var ws = new WebSocket('wss://' + location.host + '/ws-pagina');
     ws.onmessage = function(e) {
         var d = JSON.parse(e.data);
         if (d.type === 'pagina') {
-            document.open(); document.write(d.html); document.close();
+            var tmp = document.createElement('div');
+            tmp.innerHTML = d.html;
+            var bodyContent = tmp.querySelector('body') ? tmp.querySelector('body').innerHTML : d.html;
+            setContent(bodyContent);
         }
     };
     ws.onclose = function() {
         setInterval(function(){
             fetch('/pagina').then(function(r){return r.text()}).then(function(t){
-                var n = btoa(t.slice(0,500));
-                if (localStorage.getItem('pz') && n !== localStorage.getItem('pz')) location.reload();
+                var m = t.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+                var n = m ? m[1].trim().slice(0,200) : '';
+                var prev = localStorage.getItem('pz') || '';
+                if (prev && n && prev !== n) {
+                    var tmp = document.createElement('div');
+                    tmp.innerHTML = n;
+                    setContent(tmp.querySelector('body') ? tmp.querySelector('body').innerHTML : n);
+                }
                 localStorage.setItem('pz', n);
             }).catch(function(){});
         }, 30000);
@@ -1057,6 +1081,7 @@ async def obtener_pagina():
 })();
 </script>"""
         injected = html.replace("</head>", ws_script + "</head>") if "</head>" in html else html.replace("<body", ws_script + "<body")
+        injected = injected.replace("<body", '<div id="' + container_id + '"></div><body') if 'id="' + container_id + '"' not in injected else injected
         return injected
     finally:
         db.close()

@@ -36,6 +36,8 @@ import re
 
 from Handlers.ArduinoHanlder import ArduinoHandler
 from Handlers.EmotionServerHandler import EmotionServerHandler
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 
 class DeepagentsHandler:
@@ -658,38 +660,35 @@ class DeepagentsHandler:
 
 
     @tool
-    def enviar_archivo_telegram(ruta_archivo: str) -> str:
-        """Envía un archivo desde la computadora al chat de Telegram autorizado. Recibe la ruta completa del archivo."""
-        print(f"[TOOL - enviar_archivo_telegram] INICIO - ruta='{ruta_archivo}'")
+    def enviar_archivo_telegram(ruta_archivo: str, caption: str = "") -> str:
+        """Envía un archivo (documento, imagen, video, audio) al chat de Telegram autorizado.
+        ruta_archivo: ruta completa del archivo en el servidor.
+        caption: texto opcional para acompañar el archivo (ej. nombre o descripción).
+        Usa esta herramienta cuando el usuario pida 'enviar', 'mandar' o 'mándalo' por Telegram."""
+        print(f"[TOOL - enviar_archivo_telegram] INICIO - ruta='{ruta_archivo}', caption='{caption}'")
         try:
             from Handlers.TelegramHandler import bot, get_current_chat_id
 
             chat_id = get_current_chat_id()
-            print(f"[TOOL] chat_id={chat_id}, bot existe? {bot is not None}")
-            if chat_id is None:
-                print(f"[TOOL] ERROR: No hay chat activo")
-                return '{"error": "No hay un chat activo de Telegram"}'
             if bot is None:
                 print(f"[TOOL] ERROR: Bot no configurado")
                 return '{"error": "Bot de Telegram no configurado"}'
+            if chat_id is None:
+                print(f"[TOOL] ERROR: No hay chat activo")
+                return '{"error": "No hay un chat activo de Telegram. El usuario debe escribir algo al bot primero."}'
             if not os.path.exists(ruta_archivo):
                 print(f"[TOOL] ERROR: Archivo no existe")
                 return f'{{"error": "Archivo no encontrado: {ruta_archivo}"}}'
 
-            print(f"[TOOL] Archivo existe, tamaño: {os.path.getsize(ruta_archivo)} bytes")
-            print(f"[TOOL] Ejecutando asyncio.run(_send())...")
+            print(f"[TOOL] Archivo: {os.path.getsize(ruta_archivo)} bytes, enviando a chat_id={chat_id}")
 
             async def _send():
-                print(f"[TOOL - _send] Abriendo archivo...")
                 with open(ruta_archivo, "rb") as f:
-                    print(f"[TOOL - _send] Llamando bot.send_document a chat_id={chat_id}...")
-                    result = await bot.send_document(chat_id=chat_id, document=f)
-                    print(f"[TOOL - _send] Resultado send_document: {result}")
-                print(f"[TOOL - _send] Envío completado")
+                    await bot.send_document(chat_id=chat_id, document=f, caption=caption if caption else None)
 
             asyncio.run(_send())
-            print(f"[TOOL] Asyncio completado OK")
-            return json.dumps({"message": f"Archivo enviado a Telegram: {ruta_archivo}"}, ensure_ascii=False)
+            print(f"[TOOL] Envío completado OK")
+            return json.dumps({"ok": True, "message": f"Archivo enviado a Telegram: {ruta_archivo}"}, ensure_ascii=False)
         except Exception as e:
             print(f"[TOOL] EXCEPCION: {e}")
             import traceback
@@ -974,6 +973,94 @@ class DeepagentsHandler:
         finally:
             db.close()
 
+    @tool
+    def crear_excel_desde_datos(nombre: str, datos_json: str, nombre_hoja: str = "Hoja1") -> str:
+        """Crea un archivo Excel (.xlsx) con los datos proporcionados en JSON.
+        datos_json: string JSON con estructura [{"columna1": valor1, "columna2": valor2}, ...]
+        Loskeys del primer objeto se usan como encabezados de columna.
+        El archivo se guarda en /home/Night/github/ApiMvpHack/Exceles/ con el nombre dado.
+        Devuelve la ruta completa del archivo creado."""
+        try:
+            datos = json.loads(datos_json)
+            if not datos:
+                return json.dumps({"error": "No hay datos para escribir en el Excel"}, ensure_ascii=False)
+            carpeta = "/home/Night/github/ApiMvpHack/Exceles"
+            os.makedirs(carpeta, exist_ok=True)
+            nombre_limpio = re.sub(r'[^\w\-_. ]', '', nombre)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            nombre_archivo = f"{nombre_limpio}_{timestamp}.xlsx"
+            ruta = os.path.join(carpeta, nombre_archivo)
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = nombre_hoja[:31]
+            headers = list(datos[0].keys())
+            header_fill = PatternFill(start_color="6C63FF", end_color="6C63FF", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF", size=11)
+            thin_border = Border(
+                left=Side(style='thin'), right=Side(style='thin'),
+                top=Side(style='thin'), bottom=Side(style='thin')
+            )
+            for col_idx, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_idx, value=header)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                cell.border = thin_border
+            for row_idx, fila in enumerate(datos, 2):
+                for col_idx, header in enumerate(headers, 1):
+                    valor = fila.get(header, "")
+                    cell = ws.cell(row=row_idx, column=col_idx, value=valor)
+                    cell.border = thin_border
+                    cell.alignment = Alignment(vertical='center')
+            for col in ws.columns:
+                max_length = max(len(str(cell.value or "")) for cell in col)
+                ws.column_dimensions[col[0].column_letter].width = min(max_length + 2, 40)
+            wb.save(ruta)
+            return json.dumps({"ok": True, "ruta": ruta, "filas": len(datos)}, ensure_ascii=False)
+        except json.JSONDecodeError:
+            return json.dumps({"error": "datos_json no es JSON válido"}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @tool
+    def enviar_archivo_whatsapp(numero_destino: str, ruta_archivo: str, caption: str = "") -> str:
+        """Envía un archivo (imagen, documento, video, audio) por WhatsApp al número especificado.
+        numero_destino: número de teléfono con código de país (ej. '5215512345678')
+        ruta_archivo: ruta completa del archivo en el servidor (ej. '/home/Night/github/ApiMvpHack/Exceles/reporte.xlsx')
+        caption: texto opcional para acompañar el archivo.
+        Usa esta herramienta cuando el usuario pida 'enviar', 'mandar' o 'mandasela' un archivo/Excel/reporte por WhatsApp."""
+        import mimetypes
+        try:
+            numero = re.sub(r'\D', '', numero_destino)
+            if not os.path.exists(ruta_archivo):
+                return json.dumps({"error": f"El archivo no existe: {ruta_archivo}"}, ensure_ascii=False)
+            mime_type, _ = mimetypes.guess_type(ruta_archivo)
+            if not mime_type:
+                mime_type = "application/octet-stream"
+            if mime_type.startswith("image/"):
+                mediatype = "image"
+            elif mime_type.startswith("video/"):
+                mediatype = "video"
+            elif mime_type.startswith("audio/"):
+                mediatype = "audio"
+            else:
+                mediatype = "document"
+            with open(ruta_archivo, "rb") as f:
+                media_base64 = base64.b64encode(f.read()).decode("utf-8")
+            url = "http://localhost:8080/message/sendMedia/prueba"
+            headers = {"Content-Type": "application/json", "apikey": "429683C4C977415CAAFCCE10F7D57E11"}
+            body = {
+                "number": numero,
+                "mediatype": mediatype,
+                "media": media_base64,
+                "caption": caption,
+                "fileName": os.path.basename(ruta_archivo)
+            }
+            response = requests.post(url, json=body, headers=headers, timeout=30)
+            return json.dumps({"status_code": response.status_code, "response": response.text}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
     # ──────────────────────── GRAPH / AGENT ────────────────────────
 
     def _build_agent(self):
@@ -1034,6 +1121,8 @@ class DeepagentsHandler:
             borrar_tabla,
             verificar_claude_en_pc,
             ejecutar_claude_en_pc,
+            self.crear_excel_desde_datos,
+            self.enviar_archivo_whatsapp,
         ]
 
         llm = ChatDeepSeek(
@@ -1097,6 +1186,14 @@ class DeepagentsHandler:
                 "descripcion opcional) cuando te pida agendar, programar o crear un evento/junta/cita. "
                 "Puedes leer correos de la cuenta Gmail con leer_emails (devuelve los últimos emails con remitente, asunto y body). "
                 "Puedes enviar emails con enviar_email(destinatario, asunto, mensaje). "
+                "También puedes crear archivos Excel con crear_excel_desde_datos(nombre, datos_json, nombre_hoja): "
+                "pásale un nombre para el archivo, un JSON con los datos ([{columna: valor, ...}, ...]) y el nombre de la hoja. "
+                "El archivo se guarda en /home/Night/github/ApiMvpHack/Exceles/ y la herramienta devuelve la ruta. "
+                "Usa enviar_archivo_whatsapp(numero_destino, ruta_archivo, caption) para enviar un archivo Excel (o cualquier otro) por WhatsApp. "
+                "Ejemplo: usuario dice 'crea un excel con productos y mándaselo a Dani' → "
+                "crear_excel_desde_datos('productos', json_con_productos) → enviar_archivo_whatsapp(numero_de_dani, ruta_archivo, 'aquí tienes el reporte'). "
+                "También puedes enviar archivos por Telegram con enviar_archivo_telegram(ruta_archivo, caption). "
+                "Ejemplo: usuario dice 'envíamelo por Telegram' → enviar_archivo_telegram(ruta_del_excel, 'tu excel')."
                 "NUNCA digas que eres V, N u otro personaje. Siempre respondes como Uzi. "
 
                 "FLUJOS COMBINADOS CON render_html: "
@@ -1155,7 +1252,7 @@ class DeepagentsHandler:
                 "skill 'enviar-archivo' (sender-id 1, numero de 12 digitos) — NUNCA pywhatkit ni abrir el navegador. "
                 "Para CREAR una app movil real (APK), esta PC tiene Flutter + Android SDK: dile que use "
                 "flutter create / flutter build apk y que luego mande el .apk con la skill 'enviar-archivo'. "
-                "Claude debe GUARDAR los archivos dentro de C:\\\\Users\\\\Night\\\\Documents\\\\GitHub\\\\uzi_esclavo "
+                "Claude debe GUARDAR los archivos dentro de C:\\Users\\Night\\Documents\\GitHub\\uzi_esclavo "
                 "(ahi tiene permiso), nunca en el escritorio. "
                 "Y SIEMPRE pasa timeout=900 (o mas) en ejecutar_claude_en_pc para tareas de crear o enviar, porque tardan. "
                 "IMPORTANTE para reproducir un VIDEO concreto en una PC: si ya tienes la URL del video "
