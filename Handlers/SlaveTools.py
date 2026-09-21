@@ -170,6 +170,26 @@ def enviar_a_pc(numero_pc: int, accion: str, params: Optional[dict] = None) -> s
     return _ejecutar_en_loop_del_servidor(_enviar_a_pc_async(numero_pc, accion, params))
 
 
+def enviar_a_pc_y_esperar(numero_pc: int, accion: str, params: Optional[dict] = None, timeout: float = 30) -> str:
+    r"""Envía un comando a una PC esclava específica y ESPERA su respuesta antes de regresar.
+
+    Args:
+        numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
+        accion: El nombre de la acción a ejecutar (ej: 'screenshot', 'info', 'window' con op 'list').
+        params: Parámetros de la acción como diccionario (puede ser None o {}).
+        timeout: Segundos a esperar la respuesta del esclavo antes de darla por perdida.
+
+    A diferencia de enviar_a_pc (que no espera y no sabe si el comando funcionó),
+    esta tool SÍ regresa lo que contestó el esclavo (status 'ok'/'error' y el resultado,
+    p. ej. el listado de ventanas de 'window' con op 'list', el resultado de 'info', etc.).
+    Úsala cuando el usuario quiera SABER el resultado del comando, no solo dispararlo.
+    """
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, accion, params, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+
 def enviar_a_todas(accion: str, params: Optional[dict] = None) -> str:
     r"""Envía el mismo comando a todas las PCs esclavas conectadas y regresa inmediatamente.
 

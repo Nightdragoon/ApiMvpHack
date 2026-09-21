@@ -14,7 +14,7 @@ from langgraph.graph import StateGraph, MessagesState, START
 from langgraph.prebuilt import ToolNode, tools_condition
 import subprocess
 from Handlers.SlaveTools import (
-    ejecutar_claude_en_pc, pcs_conectadas, enviar_a_pc, enviar_a_todas, verificar_claude_en_pc,
+    ejecutar_claude_en_pc, pcs_conectadas, enviar_a_pc, enviar_a_pc_y_esperar, enviar_a_todas, verificar_claude_en_pc,
     enviar_archivo_a_pc, obtener_archivo_de_pc,
 )
 from Handlers.DbCrudHandler import (
@@ -1116,6 +1116,7 @@ class DeepagentsHandler:
             self.crear_evento_calendar,
             pcs_conectadas,
             enviar_a_pc,
+            enviar_a_pc_y_esperar,
             enviar_a_todas,
             ejecutar_sql,
             listar_tablas,
@@ -1219,6 +1220,17 @@ class DeepagentsHandler:
                 "Usa pcs_conectadas para listar qué PCs están online (muestra número, hostname, platform y estado). "
                 "Para enviar un comando a una PC específica, usa enviar_a_pc(numero_pc, accion, params). "
                 "Ejemplo: usuario dice 'en la PC 1 abre YouTube Music con bad bunny' → enviar_a_pc(1, 'open_youtube_music', {'query': 'bad bunny'}). "
+                "IMPORTANTE: enviar_a_pc es fire-and-forget — regresa apenas se envía el comando y NO sabe si "
+                "funcionó ni trae el resultado. Si el usuario quiere SABER qué contestó la PC (p. ej. pide el "
+                "resultado de 'info', la lista de ventanas de 'window' con op 'list', o simplemente quiere "
+                "confirmación de que el comando corrió bien), usa en su lugar "
+                "enviar_a_pc_y_esperar(numero_pc, accion, params, timeout) — esta SÍ espera y regresa la "
+                "respuesta real del esclavo (status ok/error y el resultado). "
+                "Ejemplo: usuario dice 'qué ventanas tiene abiertas la PC 1' → "
+                "enviar_a_pc_y_esperar(1, 'window', {'op': 'list'}) — y le lees el listado que regresa. "
+                "Ejemplo: usuario dice 'dame la info de la PC 1' → enviar_a_pc_y_esperar(1, 'info', {}). "
+                "Para 'screenshot' usa siempre enviar_a_pc_y_esperar, porque si no esperas la respuesta "
+                "nunca tienes la imagen en base64 para mostrarla. "
                 "Para enviar el mismo comando a todas las PCs conectadas, usa enviar_a_todas(accion, params). "
                 "Catálogo de acciones de los esclavos con sus params EXACTOS (siempre pasa los params requeridos):\n"
                 "- ping: params {} (comprueba que la PC responde)\n"
