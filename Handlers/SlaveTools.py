@@ -1,7 +1,18 @@
 import asyncio
+import base64
+import os
 from typing import Optional
 
 from Handlers.SlaveServerHandler import get_slave_server
+
+# Carpeta local del servidor donde viven los archivos que se mandan a las PCs
+# esclavas y donde se guardan los que se piden de vuelta.
+ARCHIVOS_DIR = "archivosTransferidos"
+
+
+def _archivos_dir() -> str:
+    os.makedirs(ARCHIVOS_DIR, exist_ok=True)
+    return ARCHIVOS_DIR
 
 
 def pcs_conectadas() -> str:
@@ -205,5 +216,115 @@ def ejecutar_claude_en_pc(numero_pc: int, prompt: str, skip_permissions: bool = 
         params["skip_permissions"] = True
     return _ejecutar_en_loop_del_servidor(
         _enviar_a_pc_con_respuesta_async(numero_pc, "claude_run", params, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Transferencia de archivos servidor <-> PC esclava
+# --------------------------------------------------------------------------- #
+async def _enviar_archivo_a_pc_async(numero_pc: int, nombre_archivo: str, timeout: float) -> str:
+    server = get_slave_server()
+    agent_id = server.get_agent_id_por_numero(numero_pc)
+    if not agent_id:
+        return f"Error: PC {numero_pc} no existe o nunca se ha conectado."
+    if agent_id not in server.agents:
+        info = server.agent_info.get(agent_id, {})
+        return f"Error: PC {numero_pc} ({info.get('hostname', '?')}) esta desconectada."
+
+    ruta = os.path.join(_archivos_dir(), os.path.basename(nombre_archivo))
+    if not os.path.isfile(ruta):
+        return (
+            f"Error: no se encontro '{nombre_archivo}' en la carpeta '{ARCHIVOS_DIR}' del servidor "
+            f"(subelo primero con POST /subir-archivo)."
+        )
+
+    with open(ruta, "rb") as f:
+        data = f.read()
+    content_b64 = base64.b64encode(data).decode("ascii")
+
+    try:
+        resultado = await server.send_command(
+            agent_id, "receive_file", {"filename": os.path.basename(ruta), "content_b64": content_b64}, timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        return f"Error: PC {numero_pc} no respondio en {timeout}s."
+    except Exception as e:
+        return f"Error enviando archivo a PC {numero_pc}: {e}"
+
+    info = server.agent_info.get(agent_id, {})
+    hostname = info.get("hostname", f"PC {numero_pc}")
+    if resultado.get("status") == "ok":
+        return f"Archivo '{os.path.basename(ruta)}' ({len(data)} bytes) enviado a PC {numero_pc} ({hostname})."
+    return f"PC {numero_pc} ({hostname}) — ERROR: {resultado.get('result')}"
+
+
+def enviar_archivo_a_pc(numero_pc: int, nombre_archivo: str, timeout: float = 60) -> str:
+    r"""Envía un archivo del servidor a una PC esclava; se guarda en su carpeta archivosTransferidos.
+
+    Args:
+        numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
+        nombre_archivo: Nombre del archivo, ya subido al servidor con POST /subir-archivo
+            (se busca en la carpeta 'archivosTransferidos' del servidor).
+        timeout: Segundos a esperar la confirmación del esclavo.
+
+    Usa esta herramienta cuando el usuario diga algo como 'mandale a la PC 7 este archivo'.
+    Requiere que el archivo ya exista en el servidor (subido antes con el endpoint de subida).
+    """
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_archivo_a_pc_async(numero_pc, nombre_archivo, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+
+async def _obtener_archivo_de_pc_async(numero_pc: int, nombre_archivo: str, timeout: float) -> str:
+    server = get_slave_server()
+    agent_id = server.get_agent_id_por_numero(numero_pc)
+    if not agent_id:
+        return f"Error: PC {numero_pc} no existe o nunca se ha conectado."
+    if agent_id not in server.agents:
+        info = server.agent_info.get(agent_id, {})
+        return f"Error: PC {numero_pc} ({info.get('hostname', '?')}) esta desconectada."
+
+    try:
+        resultado = await server.send_command(agent_id, "send_file", {"filename": nombre_archivo}, timeout=timeout)
+    except asyncio.TimeoutError:
+        return f"Error: PC {numero_pc} no respondio en {timeout}s."
+    except Exception as e:
+        return f"Error pidiendo archivo a PC {numero_pc}: {e}"
+
+    info = server.agent_info.get(agent_id, {})
+    hostname = info.get("hostname", f"PC {numero_pc}")
+    if resultado.get("status") != "ok":
+        return f"PC {numero_pc} ({hostname}) — ERROR: {resultado.get('result')}"
+
+    payload = resultado.get("result") or {}
+    content_b64 = payload.get("base64")
+    filename = payload.get("filename") or os.path.basename(nombre_archivo)
+    if not content_b64:
+        return f"PC {numero_pc} ({hostname}) — ERROR: respuesta sin contenido de archivo."
+
+    data = base64.b64decode(content_b64)
+    dest = os.path.join(_archivos_dir(), os.path.basename(filename))
+    with open(dest, "wb") as f:
+        f.write(data)
+    return f"Archivo '{filename}' ({len(data)} bytes) recibido de PC {numero_pc} ({hostname}) y guardado en el servidor en '{dest}'."
+
+
+def obtener_archivo_de_pc(numero_pc: int, nombre_archivo: str, timeout: float = 60) -> str:
+    r"""Pide un archivo a una PC esclava y lo guarda en el servidor.
+
+    Args:
+        numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
+        nombre_archivo: Nombre (o ruta) del archivo a pedir; el esclavo lo busca
+            primero en su carpeta 'archivosTransferidos'.
+        timeout: Segundos a esperar la respuesta del esclavo.
+
+    Usa esta herramienta cuando el usuario diga algo como 'obtén notas.txt de la PC 7 y mándamelas'.
+    El archivo queda guardado en la carpeta 'archivosTransferidos' del servidor,
+    listo para descargarse con GET /descargar-archivo/{nombre}.
+    """
+    return _ejecutar_en_loop_del_servidor(
+        _obtener_archivo_de_pc_async(numero_pc, nombre_archivo, timeout),
         wait_timeout=timeout + 15,
     )

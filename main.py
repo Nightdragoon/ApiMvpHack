@@ -1,6 +1,6 @@
 import json
 
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import sessionmaker, Session
@@ -407,6 +407,41 @@ async def websocket_pagina(websocket: WebSocket):
 async def websocket_esclavo(websocket: WebSocket):
     server = get_slave_server()
     await server.handle(websocket)
+
+
+@app.post("/subir-archivo", tags=["archivos"])
+async def subir_archivo(file: UploadFile = File(...)):
+    """Sube un archivo al servidor (carpeta 'archivosTransferidos').
+
+    Desde ahi el agente de IA puede mandarlo a una PC esclava con la tool
+    enviar_archivo_a_pc(numero_pc, nombre_archivo).
+    """
+    from Handlers.SlaveTools import ARCHIVOS_DIR, _archivos_dir
+
+    nombre = os.path.basename(file.filename or "")
+    if not nombre:
+        raise HTTPException(400, "Nombre de archivo invalido")
+
+    dest_path = os.path.join(_archivos_dir(), nombre)
+    contenido = await file.read()
+    with open(dest_path, "wb") as f:
+        f.write(contenido)
+    return {"guardado": dest_path, "filename": nombre, "size": len(contenido)}
+
+
+@app.get("/descargar-archivo/{nombre}", tags=["archivos"])
+async def descargar_archivo(nombre: str):
+    """Descarga un archivo de la carpeta 'archivosTransferidos' del servidor.
+
+    Sirve tanto para bajar archivos que se van a mandar a un esclavo como
+    los que se pidieron de vuelta con obtener_archivo_de_pc.
+    """
+    from Handlers.SlaveTools import ARCHIVOS_DIR
+
+    path = os.path.join(ARCHIVOS_DIR, os.path.basename(nombre))
+    if not os.path.isfile(path):
+        raise HTTPException(404, "Archivo no encontrado")
+    return FileResponse(path, filename=os.path.basename(nombre))
 
 
 @app.post("/webhook", tags=["emotion-server"])

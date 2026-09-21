@@ -13,7 +13,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState, START
 from langgraph.prebuilt import ToolNode, tools_condition
 import subprocess
-from Handlers.SlaveTools import ejecutar_claude_en_pc, pcs_conectadas, enviar_a_pc, enviar_a_todas, verificar_claude_en_pc
+from Handlers.SlaveTools import (
+    ejecutar_claude_en_pc, pcs_conectadas, enviar_a_pc, enviar_a_todas, verificar_claude_en_pc,
+    enviar_archivo_a_pc, obtener_archivo_de_pc,
+)
 from Handlers.DbCrudHandler import (
     ejecutar_sql, listar_tablas, describir_tabla, crear_tabla, borrar_tabla,
 )
@@ -1121,6 +1124,8 @@ class DeepagentsHandler:
             borrar_tabla,
             verificar_claude_en_pc,
             ejecutar_claude_en_pc,
+            enviar_archivo_a_pc,
+            obtener_archivo_de_pc,
             self.crear_excel_desde_datos,
             self.enviar_archivo_whatsapp,
         ]
@@ -1266,6 +1271,17 @@ class DeepagentsHandler:
                 "Si la PC no está conectada, la tool retorna un error legible. "
                 "IMPORTANTE: antes de enviar un comando a una PC, verifica que esté conectada usando pcs_conectadas. "
                 "IMPORTANTE: cuando la tool del esclavo devuelva 'status':'ok', el comando SÍ se ejecutó — no digas que la PC está colgada ni pidas reiniciar el agente. "
+                "## Transferencia de archivos con PCs esclavas\n"
+                "Servidor → PC: enviar_archivo_a_pc(numero_pc, nombre_archivo) manda un archivo al esclavo, "
+                "que lo guarda en su carpeta 'archivosTransferidos'. El archivo debe existir PRIMERO en el "
+                "servidor, en su propia carpeta 'archivosTransferidos' (se sube ahi con POST /subir-archivo, "
+                "fuera del chat — si el usuario todavia no lo subió, dile que lo suba primero). "
+                "Ejemplo: usuario dice 'mándale a la PC 7 el archivo reporte.pdf' → enviar_archivo_a_pc(7, 'reporte.pdf'). "
+                "PC → servidor: obtener_archivo_de_pc(numero_pc, nombre_archivo) le pide un archivo a la PC "
+                "(lo busca en su carpeta 'archivosTransferidos') y lo guarda en el servidor, disponible en "
+                "GET /descargar-archivo/{nombre}. "
+                "Ejemplo: usuario dice 'de la PC 7 obtén notas.txt y mándamelas' → obtener_archivo_de_pc(7, 'notas.txt'). "
+                "Ambas tools esperan la confirmación del esclavo (usa timeout mayor para archivos grandes). "
 
                 "## Base de datos ProyectDb\n"
                 "Tienes control total sobre la base de datos ProyectDb.db (SQLite). "
