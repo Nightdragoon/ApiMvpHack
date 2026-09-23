@@ -1,4 +1,4 @@
-"""Controla el mouse con la mano (MediaPipe + PyAutoGUI).
+"""Controla el mouse con la mano (MediaPipe Tasks + PyAutoGUI).
 
 Script del catalogo de Uzi: se manda a un esclavo con enviar_archivo_a_pc y se
 corre con ejecutar_script_en_pc (background=True, porque corre indefinidamente
@@ -9,7 +9,7 @@ Uso:
                               [--smoothing 0.35] [--click-cooldown 0.6] [--margin 0.15]
 
 Como funciona:
-- Sigue UNA mano con MediaPipe Hands.
+- Sigue UNA mano con MediaPipe HandLandmarker (API Tasks).
 - El cursor se mueve con un punto de referencia ESTABLE (promedio de la
   muñeca y los nudillos), no con la punta de un dedo, para que no salte de
   lugar cuando cierras el puño.
@@ -20,19 +20,27 @@ Como funciona:
 - Ventana de vista previa (activada por default; --no-preview la quita) con
   los landmarks de la mano y el estado detectado. Se cierra con 'q' o ESC.
 
-Requiere mediapipe y pyautogui instalados.
+Requiere mediapipe y pyautogui instalados. IMPORTANTE: mediapipe elimino la
+API vieja 'mediapipe.solutions.hands' en sus releases recientes (0.10.30+ /
+1.x) para Windows/Python nuevos - este script usa la API nueva 'Tasks'
+(HandLandmarker), que descarga un modelo .task ~10MB la primera vez que corre
+y lo cachea junto a este archivo (carpeta '_models/').
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
+import urllib.request
 
 import cv2
 
 try:
     import mediapipe as mp
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python import vision as mp_vision
 except ImportError:
     print("mediapipe no esta instalado. Instala con: pip install mediapipe", file=sys.stderr)
     sys.exit(1)
@@ -44,7 +52,13 @@ except ImportError:
     sys.exit(1)
 
 
-# Indices de MediaPipe Hands para cada dedo (excepto el pulgar): (punta, PIP).
+_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/latest/hand_landmarker.task"
+)
+_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_models", "hand_landmarker.task")
+
+# Indices del modelo de MediaPipe para cada dedo (excepto el pulgar): (punta, PIP).
 _DEDOS = {
     "index": (8, 6),
     "middle": (12, 10),
@@ -55,6 +69,32 @@ _DEDOS = {
 # Puntos usados como referencia estable del cursor: muñeca + nudillos (MCP).
 # A diferencia de la punta de un dedo, no se mueven cuando cierras el puño.
 _PUNTOS_REFERENCIA = (0, 5, 9, 13, 17)
+
+# Topologia fija de los 21 landmarks de una mano, para dibujar el
+# "esqueleto" sin depender de mp.solutions (ya no existe en las versiones nuevas).
+_HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12),
+    (9, 13), (13, 14), (14, 15), (15, 16),
+    (13, 17), (17, 18), (18, 19), (19, 20),
+    (0, 17),
+]
+
+
+def _ensure_model() -> str:
+    if os.path.isfile(_MODEL_PATH):
+        return _MODEL_PATH
+    os.makedirs(os.path.dirname(_MODEL_PATH), exist_ok=True)
+    print("Descargando modelo de manos de MediaPipe (una sola vez)...", file=sys.stderr)
+    tmp = _MODEL_PATH + ".tmp"
+    try:
+        urllib.request.urlretrieve(_MODEL_URL, tmp)
+        os.replace(tmp, _MODEL_PATH)
+    except Exception as exc:
+        print(f"No se pudo descargar el modelo de manos: {exc}", file=sys.stderr)
+        sys.exit(1)
+    return _MODEL_PATH
 
 
 def _dedos_extendidos(landmarks) -> int:
@@ -73,6 +113,15 @@ def _punto_referencia(landmarks) -> tuple[float, float]:
     return x, y
 
 
+def _dibujar_mano(frame, landmarks) -> None:
+    h, w = frame.shape[:2]
+    puntos = [(int(lm.x * w), int(lm.y * h)) for lm in landmarks]
+    for a, b in _HAND_CONNECTIONS:
+        cv2.line(frame, puntos[a], puntos[b], (0, 255, 0), 2)
+    for x, y in puntos:
+        cv2.circle(frame, (x, y), 4, (0, 200, 255), -1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--camera", type=int, default=0)
@@ -89,8 +138,13 @@ def main() -> None:
     screen_w, screen_h = pyautogui.size()
     pyautogui.PAUSE = 0  # nosotros controlamos el ritmo (un moveTo por frame)
 
-    mp_hands = mp.solutions.hands
-    mp_draw = mp.solutions.drawing_utils
+    options = mp_vision.HandLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=_ensure_model()),
+        num_hands=1,
+        min_hand_detection_confidence=0.6,
+        min_tracking_confidence=0.6,
+        running_mode=mp_vision.RunningMode.VIDEO,
+    )
 
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():
@@ -101,11 +155,11 @@ def main() -> None:
     puno_cerrado_antes = False
     ultimo_click = 0.0
     margin = min(max(args.margin, 0.0), 0.45)
+    start = time.monotonic()
+    last_ts = -1
 
     try:
-        with mp_hands.Hands(
-            max_num_hands=1, min_detection_confidence=0.6, min_tracking_confidence=0.6
-        ) as hands:
+        with mp_vision.HandLandmarker.create_from_options(options) as landmarker:
             while True:
                 ok, frame = cap.read()
                 if not ok:
@@ -113,14 +167,21 @@ def main() -> None:
                 frame = cv2.flip(frame, 1)  # espejo: mas intuitivo al moverse
 
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                res = hands.process(rgb)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+                ts_ms = int((time.monotonic() - start) * 1000)
+                if ts_ms <= last_ts:
+                    ts_ms = last_ts + 1
+                last_ts = ts_ms
+
+                res = landmarker.detect_for_video(mp_image, ts_ms)
+                todas_las_manos = res.hand_landmarks or []
 
                 estado = "sin mano"
-                if res.multi_hand_landmarks:
-                    hand_landmarks = res.multi_hand_landmarks[0]
-                    landmarks = hand_landmarks.landmark
+                if todas_las_manos:
+                    landmarks = todas_las_manos[0]
                     if not args.no_preview:
-                        mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                        _dibujar_mano(frame, landmarks)
 
                     lx, ly = _punto_referencia(landmarks)
                     # Mapea el area util de la camara (descontando el margen) a toda la pantalla.
