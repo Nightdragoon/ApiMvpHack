@@ -508,13 +508,13 @@ def leer_stream_vision(stream_id: str, n: int = 5) -> str:
 # --------------------------------------------------------------------------- #
 # Relanzar scripts ya existentes en la PC (sin pasar por Claude Code)
 # --------------------------------------------------------------------------- #
-def ejecutar_script_en_pc(numero_pc: int, ruta_script: str, args: Optional[list] = None, segundo_plano: bool = True, timeout: float = 60) -> str:
+def ejecutar_script_en_pc(numero_pc: int, ruta_script: str, argumentos: Optional[list] = None, segundo_plano: bool = True, timeout: float = 60) -> str:
     r"""Corre un script .py que YA existe en una PC esclava, sin invocar a Claude Code.
 
     Args:
         numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
         ruta_script: Ruta del .py en esa PC (relativa a donde corre el agente, o absoluta).
-        args: Lista opcional de argumentos para el script.
+        argumentos: Lista opcional de argumentos para el script.
         segundo_plano: True (default) para lanzarlo sin esperar — OBLIGATORIO para
             scripts con ventana/cámara en vivo (p. ej. uno con cv2.imshow) que el
             usuario cierra a mano, porque si no el comando se queda colgado hasta
@@ -528,8 +528,8 @@ def ejecutar_script_en_pc(numero_pc: int, ruta_script: str, args: Optional[list]
     detección de rostros en la PC 3' → ejecutar_script_en_pc(3, 'ver_rostros.py').
     """
     params = {"path": ruta_script, "background": segundo_plano}
-    if args:
-        params["args"] = args
+    if argumentos:
+        params["args"] = argumentos
     return _ejecutar_en_loop_del_servidor(
         _enviar_a_pc_con_respuesta_async(numero_pc, "run_script", params, timeout),
         wait_timeout=timeout + 15,
