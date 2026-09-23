@@ -18,6 +18,7 @@ from Handlers.SlaveTools import (
     enviar_archivo_a_pc, obtener_archivo_de_pc,
     detectar_rostros_pc, detectar_manos_pc, iniciar_stream_vision, detener_stream_vision, leer_stream_vision,
     ejecutar_script_en_pc, listar_scripts_disponibles,
+    listar_scripts_corriendo_en_pc, detener_script_en_pc,
 )
 from Handlers.DbCrudHandler import (
     ejecutar_sql, listar_tablas, describir_tabla, crear_tabla, borrar_tabla,
@@ -1136,6 +1137,8 @@ class DeepagentsHandler:
             leer_stream_vision,
             ejecutar_script_en_pc,
             listar_scripts_disponibles,
+            listar_scripts_corriendo_en_pc,
+            detener_script_en_pc,
             self.crear_excel_desde_datos,
             self.enviar_archivo_whatsapp,
         ]
@@ -1360,6 +1363,13 @@ class DeepagentsHandler:
                 "enviar_archivo_a_pc(5, 'mouse_por_mano.py') → ejecutar_script_en_pc(5, 'mouse_por_mano.py'). "
                 "Avísale al usuario que para hacer clic tiene que cerrar el puño frente a la cámara, y que puede "
                 "cerrar el script con 'q' o ESC en la ventana de vista previa que se abre en esa PC. "
+                "PARAR un script que quedó corriendo: los scripts del catálogo se lanzan con "
+                "segundo_plano=True y NO paran solos — si el usuario pide 'ya párale a la cámara', 'cierra esa "
+                "ventana', 'deja de controlar el mouse', etc., usa detener_script_en_pc(numero_pc, "
+                "nombre='<script>.py') (p. ej. detener_script_en_pc(5, nombre='mouse_por_mano.py')). Si no sabes "
+                "qué script sigue corriendo en esa PC, primero consulta listar_scripts_corriendo_en_pc(numero_pc). "
+                "No hace falta el pid salvo que el usuario lo especifique — con el nombre alcanza (detiene todas "
+                "las instancias de ese script si quedó más de una corriendo). "
 
                 "## Base de datos ProyectDb\n"
                 "Tienes control total sobre la base de datos ProyectDb.db (SQLite). "

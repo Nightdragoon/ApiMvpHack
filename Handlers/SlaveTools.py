@@ -585,3 +585,52 @@ def listar_scripts_disponibles() -> str:
     for nombre in del_runtime:
         lineas.append(f"- {nombre} (subido en runtime)")
     return "\n".join(lineas)
+
+
+# --------------------------------------------------------------------------- #
+# Detener scripts que quedaron corriendo en background (run_script)
+# --------------------------------------------------------------------------- #
+def listar_scripts_corriendo_en_pc(numero_pc: int, timeout: float = 15) -> str:
+    r"""Lista los scripts que están corriendo AHORA MISMO en background en una PC esclava.
+
+    Args:
+        numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
+        timeout: Segundos a esperar la respuesta.
+
+    Son los lanzados con ejecutar_script_en_pc (segundo_plano=True) que siguen vivos
+    (p. ej. 'ver_rostros.py' o 'mouse_por_mano.py' con su ventana todavía abierta).
+    Usa esta herramienta antes de detener_script_en_pc si no sabes el pid o el nombre exacto.
+    """
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, "list_running_scripts", {}, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+
+def detener_script_en_pc(numero_pc: int, nombre: Optional[str] = None, pid: Optional[int] = None, timeout: float = 15) -> str:
+    r"""Detiene un script que quedó corriendo en background en una PC esclava.
+
+    Args:
+        numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
+        nombre: Nombre del script a detener, p. ej. 'ver_rostros.py' o 'mouse_por_mano.py'
+            (detiene TODAS las instancias con ese nombre si hay más de una corriendo).
+        pid: Alternativa a 'nombre': el pid exacto (lo devuelve ejecutar_script_en_pc
+            o listar_scripts_corriendo_en_pc).
+        timeout: Segundos a esperar la confirmación.
+
+    Pasa 'nombre' O 'pid' (al menos uno). Usa esta herramienta cuando el usuario pida
+    parar/cerrar/detener algo que dejaste corriendo con ejecutar_script_en_pc — por
+    ejemplo la ventana de detección de rostros/manos, o el control de mouse por mano.
+    Ejemplo: usuario dice 'ya párale a la cámara de la PC 3' → detener_script_en_pc(3, nombre='ver_rostros.py').
+    """
+    if not nombre and pid is None:
+        return "Error: pasa 'nombre' (p. ej. 'ver_rostros.py') o 'pid' para saber que script detener."
+    params = {}
+    if pid is not None:
+        params["pid"] = pid
+    if nombre:
+        params["name"] = nombre
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, "stop_script", params, timeout),
+        wait_timeout=timeout + 15,
+    )
