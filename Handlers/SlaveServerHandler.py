@@ -1,6 +1,7 @@
 import asyncio
 import json
 import uuid
+from collections import deque
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
@@ -17,6 +18,12 @@ class SlaveServerHandler:
         self.agent_id_por_numero: dict[int, str] = {}
         self.next_numero: int = 1
         self._close_events: dict[str, asyncio.Event] = {}
+        # Streams de vision activos: stream_id -> agent_id, y los ultimos
+        # eventos recibidos de cada uno (para que las tools del modelo los
+        # lean sin bloquear esperando una respuesta que no llega por el
+        # camino normal request/response).
+        self.stream_agent: dict[str, str] = {}
+        self.stream_events: dict[str, deque] = {}
         # Referencia al event loop principal (donde viven los WebSockets).
         # Las tools del modelo corren en otro hilo y necesitan agendar el
         # send aqui via run_coroutine_threadsafe, no crear un loop nuevo.
@@ -94,6 +101,14 @@ class SlaveServerHandler:
                     continue
 
                 msg_id = msg.get("id")
+                msg_type = msg.get("type")
+
+                # Eventos de streaming (vision en vivo, etc.): no tienen 'id'
+                # que correlacionar, se identifican por 'type' + 'stream_id'.
+                if msg_type in ("vision_stream", "vision_stream_end"):
+                    self._handle_stream_event(agent_id, msg)
+                    continue
+
                 print(f"[SLAVE] Respuesta de {agent_id}: {msg}")
                 if msg_id:
                     if msg_id in self.pending_results:
@@ -109,6 +124,21 @@ class SlaveServerHandler:
             self._desconectar(agent_id)
             close_event.set()
 
+    def _handle_stream_event(self, agent_id: str, msg: dict):
+        stream_id = msg.get("stream_id")
+        if not stream_id:
+            print(f"[SLAVE] Evento de stream sin stream_id de {agent_id}: {msg}")
+            return
+
+        if msg.get("type") == "vision_stream_end":
+            print(f"[SLAVE] Stream {stream_id} de {agent_id} termino")
+            self.stream_agent.pop(stream_id, None)
+            return
+
+        self.stream_agent[stream_id] = agent_id
+        events = self.stream_events.setdefault(stream_id, deque(maxlen=30))
+        events.append(msg)
+
     def _desconectar(self, agent_id: str):
         numero = self.numero_por_agent_id.get(agent_id)
         self.agents.pop(agent_id, None)
@@ -121,6 +151,11 @@ class SlaveServerHandler:
         if pending_count > 0:
             print(f"[SLAVE] _desconectar: clearing {pending_count} pending results")
         self.pending_results.clear()
+        # Los streams de esta PC ya no van a recibir mas eventos (el agente
+        # los cancela al perder la conexion).
+        muertos = [sid for sid, aid in self.stream_agent.items() if aid == agent_id]
+        for sid in muertos:
+            self.stream_agent.pop(sid, None)
         print(f"[SLAVE] Desconectado: PC {numero} ({agent_id})")
 
     async def send_command(
@@ -211,6 +246,15 @@ class SlaveServerHandler:
 
     def get_agent_id_por_numero(self, numero: int) -> Optional[str]:
         return self.agent_id_por_numero.get(numero)
+
+    def get_agent_id_por_stream(self, stream_id: str) -> Optional[str]:
+        return self.stream_agent.get(stream_id)
+
+    def get_stream_events(self, stream_id: str, n: int = 5) -> list[dict]:
+        events = self.stream_events.get(stream_id)
+        if not events:
+            return []
+        return list(events)[-n:]
 
 
 slave_server_global: Optional[SlaveServerHandler] = None

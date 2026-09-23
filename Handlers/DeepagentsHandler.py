@@ -16,6 +16,7 @@ import subprocess
 from Handlers.SlaveTools import (
     ejecutar_claude_en_pc, pcs_conectadas, enviar_a_pc, enviar_a_pc_y_esperar, enviar_a_todas, verificar_claude_en_pc,
     enviar_archivo_a_pc, obtener_archivo_de_pc,
+    detectar_rostros_pc, detectar_manos_pc, iniciar_stream_vision, detener_stream_vision, leer_stream_vision,
 )
 from Handlers.DbCrudHandler import (
     ejecutar_sql, listar_tablas, describir_tabla, crear_tabla, borrar_tabla,
@@ -1127,6 +1128,11 @@ class DeepagentsHandler:
             ejecutar_claude_en_pc,
             enviar_archivo_a_pc,
             obtener_archivo_de_pc,
+            detectar_rostros_pc,
+            detectar_manos_pc,
+            iniciar_stream_vision,
+            detener_stream_vision,
+            leer_stream_vision,
             self.crear_excel_desde_datos,
             self.enviar_archivo_whatsapp,
         ]
@@ -1294,6 +1300,26 @@ class DeepagentsHandler:
                 "GET /descargar-archivo/{nombre}. "
                 "Ejemplo: usuario dice 'de la PC 7 obtén notas.txt y mándamelas' → obtener_archivo_de_pc(7, 'notas.txt'). "
                 "Ambas tools esperan la confirmación del esclavo (usa timeout mayor para archivos grandes). "
+                "## Visión artificial en PCs esclavas (rostros / manos)\n"
+                "Las PCs esclavas pueden detectar rostros y manos con su cámara. Hay dos modos:\n"
+                "1) UNA FOTO: detectar_rostros_pc(numero_pc) o detectar_manos_pc(numero_pc) — toman una foto "
+                "YA MISMO y regresan cuántos rostros/manos hay y sus coordenadas. Úsalas para preguntas puntuales "
+                "como '¿hay alguien frente a la PC 3?' o '¿cuántas manos ve la cámara de la PC 1?'.\n"
+                "2) EN VIVO (streaming): iniciar_stream_vision(numero_pc, modo) donde modo es 'faces' o 'hands' "
+                "deja a la PC detectando continuamente (cada 'intervalo' segundos, default 1) y te da un "
+                "stream_id. Usa leer_stream_vision(stream_id) para consultar las detecciones más recientes SIN "
+                "bloquear (no vuelve a pedirle nada a la PC, solo lee lo último que ya llegó), y "
+                "detener_stream_vision(stream_id) cuando el usuario pida parar o ya no lo necesites. "
+                "Ejemplo: usuario dice 'déjame viendo si hay gente frente a la PC 5' → "
+                "iniciar_stream_vision(5, 'faces') → guarda el stream_id para leerlo después con leer_stream_vision. "
+                "Si el usuario dice 'ya párale a la cámara' → detener_stream_vision(stream_id). "
+                "IMPORTANTE: detect_hands / modo 'hands' requiere que la PC tenga 'mediapipe' instalado; si falla "
+                "con un error de módulo faltante, dile al usuario que esa PC no soporta detección de manos aún. "
+                "Si el usuario pide algo de visión MÁS ESPECÍFICO que no sea rostros/manos (por ejemplo 'detecta "
+                "si traigo lentes', 'cuenta cuántos dedos levanto', 'reconoce objetos'), no hay una tool fija para "
+                "eso: usa ejecutar_claude_en_pc(numero_pc, prompt) pidiéndole a Claude Code que escriba y corra un "
+                "script de Python con OpenCV/MediaPipe para esa tarea puntual en esa PC (ya tiene opencv-python "
+                "instalado, y mediapipe si aplica). "
 
                 "## Base de datos ProyectDb\n"
                 "Tienes control total sobre la base de datos ProyectDb.db (SQLite). "

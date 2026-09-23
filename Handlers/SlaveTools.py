@@ -348,3 +348,158 @@ def obtener_archivo_de_pc(numero_pc: int, nombre_archivo: str, timeout: float = 
         _obtener_archivo_de_pc_async(numero_pc, nombre_archivo, timeout),
         wait_timeout=timeout + 15,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Vision artificial (rostros / manos)
+# --------------------------------------------------------------------------- #
+def detectar_rostros_pc(numero_pc: int, camara: int = 0, timeout: float = 20) -> str:
+    r"""Toma una foto con la cámara de una PC esclava y detecta rostros (OpenCV).
+
+    Args:
+        numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
+        camara: Índice de la cámara a usar (0 = por defecto).
+        timeout: Segundos a esperar la respuesta.
+
+    Devuelve cuántos rostros se detectaron y sus coordenadas (x, y, ancho, alto).
+    Usa esta herramienta cuando el usuario pida detectar rostros o caras en una PC.
+    """
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, "detect_faces", {"camera_index": camara}, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+
+def detectar_manos_pc(numero_pc: int, camara: int = 0, timeout: float = 20) -> str:
+    r"""Toma una foto con la cámara de una PC esclava y detecta manos (MediaPipe).
+
+    Args:
+        numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
+        camara: Índice de la cámara a usar (0 = por defecto).
+        timeout: Segundos a esperar la respuesta.
+
+    Devuelve cuántas manos se detectaron, de qué mano (izquierda/derecha) y sus
+    landmarks (puntos de la mano). Requiere que la PC tenga 'mediapipe' instalado.
+    Usa esta herramienta cuando el usuario pida detectar manos en una PC.
+    """
+    return _ejecutar_en_loop_del_servidor(
+        _enviar_a_pc_con_respuesta_async(numero_pc, "detect_hands", {"camera_index": camara}, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+
+async def _iniciar_stream_vision_async(numero_pc: int, modo: str, intervalo: float, camara: int, duracion, timeout: float) -> str:
+    server = get_slave_server()
+    agent_id = server.get_agent_id_por_numero(numero_pc)
+    if not agent_id:
+        return f"Error: PC {numero_pc} no existe o nunca se ha conectado."
+    if agent_id not in server.agents:
+        info = server.agent_info.get(agent_id, {})
+        return f"Error: PC {numero_pc} ({info.get('hostname', '?')}) esta desconectada."
+
+    params = {"mode": modo, "interval": intervalo, "camera_index": camara}
+    if duracion:
+        params["duration"] = duracion
+
+    try:
+        resultado = await server.send_command(agent_id, "start_vision_stream", params, timeout=timeout)
+    except asyncio.TimeoutError:
+        return f"Error: PC {numero_pc} no respondio en {timeout}s."
+    except Exception as e:
+        return f"Error iniciando stream en PC {numero_pc}: {e}"
+
+    if resultado.get("status") != "ok":
+        return f"Error: {resultado.get('result')}"
+
+    stream_id = (resultado.get("result") or {}).get("stream_id")
+    if stream_id:
+        server.stream_agent[stream_id] = agent_id
+    return (
+        f"Stream de '{modo}' iniciado en PC {numero_pc} (cada {intervalo}s). "
+        f"stream_id='{stream_id}'. Usa leer_stream_vision('{stream_id}') para ver las "
+        f"ultimas detecciones y detener_stream_vision('{stream_id}') para pararlo."
+    )
+
+
+def iniciar_stream_vision(numero_pc: int, modo: str, intervalo: float = 1.0, camara: int = 0, duracion: Optional[float] = None, timeout: float = 20) -> str:
+    r"""Inicia detección continua (rostros o manos) en la cámara de una PC esclava.
+
+    Args:
+        numero_pc: El número de PC (1, 2, 3...) según pcs_conectadas.
+        modo: 'faces' para rostros o 'hands' para manos.
+        intervalo: Segundos entre cada foto/deteccion (default 1.0).
+        camara: Índice de la cámara a usar (0 = por defecto).
+        duracion: Segundos máximos que dura el stream (None = hasta que se detenga a mano).
+        timeout: Segundos a esperar la confirmación de arranque.
+
+    A diferencia de detectar_rostros_pc/detectar_manos_pc (una sola foto), esto deja
+    a la PC mandando detecciones en vivo cada 'intervalo' segundos. Usa
+    leer_stream_vision(stream_id) para consultar las últimas detecciones, y
+    detener_stream_vision(stream_id) para pararlo cuando el usuario lo pida.
+    Ejemplo: usuario dice 'detecta rostros en vivo en la PC 3' → iniciar_stream_vision(3, 'faces').
+    """
+    if modo not in ("faces", "hands"):
+        return "Error: 'modo' debe ser 'faces' o 'hands'."
+    return _ejecutar_en_loop_del_servidor(
+        _iniciar_stream_vision_async(numero_pc, modo, intervalo, camara, duracion, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+
+async def _detener_stream_vision_async(stream_id: str, timeout: float) -> str:
+    server = get_slave_server()
+    agent_id = server.get_agent_id_por_stream(stream_id)
+    if not agent_id:
+        return f"Error: no hay un stream activo con id '{stream_id}'."
+    if agent_id not in server.agents:
+        return f"Error: la PC dueña del stream '{stream_id}' esta desconectada."
+
+    try:
+        resultado = await server.send_command(agent_id, "stop_vision_stream", {"stream_id": stream_id}, timeout=timeout)
+    except asyncio.TimeoutError:
+        return f"Error: la PC no respondio en {timeout}s."
+    except Exception as e:
+        return f"Error deteniendo el stream: {e}"
+
+    server.stream_agent.pop(stream_id, None)
+    if resultado.get("status") == "ok":
+        return f"Stream '{stream_id}' detenido."
+    return f"Error: {resultado.get('result')}"
+
+
+def detener_stream_vision(stream_id: str, timeout: float = 15) -> str:
+    r"""Detiene un stream de visión (rostros/manos) que esté corriendo en una PC.
+
+    Args:
+        stream_id: El id del stream devuelto por iniciar_stream_vision.
+        timeout: Segundos a esperar la confirmación.
+    """
+    return _ejecutar_en_loop_del_servidor(
+        _detener_stream_vision_async(stream_id, timeout),
+        wait_timeout=timeout + 15,
+    )
+
+
+def leer_stream_vision(stream_id: str, n: int = 5) -> str:
+    r"""Muestra las últimas detecciones de un stream de visión activo (o recién terminado).
+
+    Args:
+        stream_id: El id del stream devuelto por iniciar_stream_vision.
+        n: Cuántos eventos recientes mostrar (default 5).
+
+    Usa esta herramienta cuando el usuario pregunte 'qué está viendo la cámara',
+    'cuántos rostros hay ahora', etc. sobre un stream que ya iniciaste.
+    No bloquea ni espera: lee lo último que ya llegó del esclavo.
+    """
+    server = get_slave_server()
+    eventos = server.get_stream_events(stream_id, n)
+    if not eventos:
+        return f"No hay eventos registrados para el stream '{stream_id}' (¿ya terminó o el id es incorrecto?)."
+
+    lineas = [f"=== Últimos {len(eventos)} eventos de '{stream_id}' ==="]
+    for ev in eventos:
+        seq = ev.get("seq")
+        status = ev.get("status")
+        resultado = ev.get("result")
+        lineas.append(f"seq {seq} [{status}]: {resultado}")
+    return "\n".join(lineas)
