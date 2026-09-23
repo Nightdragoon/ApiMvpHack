@@ -17,7 +17,7 @@ from Handlers.SlaveTools import (
     ejecutar_claude_en_pc, pcs_conectadas, enviar_a_pc, enviar_a_pc_y_esperar, enviar_a_todas, verificar_claude_en_pc,
     enviar_archivo_a_pc, obtener_archivo_de_pc,
     detectar_rostros_pc, detectar_manos_pc, iniciar_stream_vision, detener_stream_vision, leer_stream_vision,
-    ejecutar_script_en_pc,
+    ejecutar_script_en_pc, listar_scripts_disponibles,
 )
 from Handlers.DbCrudHandler import (
     ejecutar_sql, listar_tablas, describir_tabla, crear_tabla, borrar_tabla,
@@ -1135,6 +1135,7 @@ class DeepagentsHandler:
             detener_stream_vision,
             leer_stream_vision,
             ejecutar_script_en_pc,
+            listar_scripts_disponibles,
             self.crear_excel_desde_datos,
             self.enviar_archivo_whatsapp,
         ]
@@ -1277,9 +1278,16 @@ class DeepagentsHandler:
                 "skill 'enviar-archivo' (sender-id 1, numero de 12 digitos) — NUNCA pywhatkit ni abrir el navegador. "
                 "Para CREAR una app movil real (APK), esta PC tiene Flutter + Android SDK: dile que use "
                 "flutter create / flutter build apk y que luego mande el .apk con la skill 'enviar-archivo'. "
-                "Claude debe GUARDAR los archivos dentro de C:\\Users\\Night\\Documents\\GitHub\\uzi_esclavo "
+                "Claude debe GUARDAR los archivos dentro de C:\\Users\\emagi\\Documents\\GitHub\\uzi_esclavo "
                 "(ahi tiene permiso), nunca en el escritorio. "
                 "Y SIEMPRE pasa timeout=900 (o mas) en ejecutar_claude_en_pc para tareas de crear o enviar, porque tardan. "
+                "REGLA DE GIT — ejecutar_claude_en_pc corre DENTRO del repo de uzi_esclavo: dile SIEMPRE a Claude "
+                "que NO haga 'git add', 'git commit' ni 'git push' salvo que el usuario lo haya pedido "
+                "explícitamente en ESTA tarea — nunca como parte de 'guardar el trabajo' por su cuenta. Y que no "
+                "deje scripts sueltos en la raíz del repo si son de visión/automatización reutilizable: si ya "
+                "existe algo parecido en listar_scripts_disponibles() que lo use, y si crea uno nuevo que avise "
+                "el nombre del archivo (para que tú lo agregues al catálogo con obtener_archivo_de_pc) en vez de "
+                "generarlo cada vez que se repita el pedido. "
                 "IMPORTANTE para reproducir un VIDEO concreto en una PC: si ya tienes la URL del video "
                 "(por ejemplo de buscar_youtube), usa open_url con esa URL exacta, NO open_youtube. "
                 "open_youtube sin 'url' solo abre la pagina de YouTube o una busqueda. "
@@ -1317,19 +1325,41 @@ class DeepagentsHandler:
                 "Si el usuario dice 'ya párale a la cámara' → detener_stream_vision(stream_id). "
                 "IMPORTANTE: detect_hands / modo 'hands' requiere que la PC tenga 'mediapipe' instalado; si falla "
                 "con un error de módulo faltante, dile al usuario que esa PC no soporta detección de manos aún. "
-                "Si el usuario pide algo de visión MÁS ESPECÍFICO que no sea rostros/manos (por ejemplo 'detecta "
-                "si traigo lentes', 'cuenta cuántos dedos levanto', 'reconoce objetos'), no hay una tool fija para "
-                "eso: usa ejecutar_claude_en_pc(numero_pc, prompt) pidiéndole a Claude Code que escriba y corra un "
-                "script de Python con OpenCV/MediaPipe para esa tarea puntual en esa PC (ya tiene opencv-python "
-                "instalado, y mediapipe si aplica). "
-                "IMPORTANTE — no repitas ejecutar_claude_en_pc para lo mismo dos veces: si Claude ya creó y probó "
-                "un script en una PC (te lo va a decir, con el nombre del archivo, p. ej. 'ver_rostros.py'), la "
-                "SIGUIENTE vez que el usuario pida correrlo de nuevo usa ejecutar_script_en_pc(numero_pc, "
-                "'ver_rostros.py') en vez de volver a llamar a Claude — es instantáneo y no gasta tokens. "
+                "## CATÁLOGO de scripts (SIEMPRE antes que Claude Code)\n"
+                "El servidor tiene un catálogo de scripts .py YA HECHOS y probados (carpeta versionada "
+                "'scripts_catalogo', más lo que se haya subido en runtime a 'archivosTransferidos'). Hoy incluye: "
+                "'ver_rostros.py' (ventana en vivo con detección de rostros, OpenCV), 'ver_manos.py' (ventana en "
+                "vivo con detección de manos, MediaPipe), y 'mouse_por_mano.py' (controla el mouse de esa PC con "
+                "la mano frente a la cámara: mueve el cursor siguiendo la mano, y CERRAR EL PUÑO hace clic "
+                "izquierdo; se cierra con 'q'/ESC en su ventana de vista previa). "
+                "Para CUALQUIER pedido de visión/automatización, este es el flujo OBLIGATORIO, en orden:\n"
+                "1. listar_scripts_disponibles() — mira qué scripts ya existen en el catálogo.\n"
+                "2. Si alguno sirve para lo que pide el usuario, mándalo a la PC con "
+                "enviar_archivo_a_pc(numero_pc, nombre_script) y córrelo con "
+                "ejecutar_script_en_pc(numero_pc, nombre_script). NO llames a ejecutar_claude_en_pc en este caso "
+                "— el script ya existe, no hay nada que generar.\n"
+                "3. SOLO si ningún script del catálogo cubre lo que pide el usuario (p. ej. 'detecta si traigo "
+                "lentes', 'cuenta cuántos dedos levanto'), ENTONCES usa ejecutar_claude_en_pc(numero_pc, prompt) "
+                "pidiéndole a Claude Code que escriba y pruebe un script nuevo con OpenCV/MediaPipe. En ese "
+                "prompt dile a Claude que, una vez probado y funcionando, te avise el nombre del archivo — "
+                "después tú lo agregas al catálogo del servidor pidiéndole el archivo de vuelta con "
+                "obtener_archivo_de_pc(numero_pc, nombre_archivo), para que la PRÓXIMA vez que alguien pida algo "
+                "parecido ya exista en listar_scripts_disponibles() y no haga falta volver a generarlo.\n"
+                "NUNCA llames a ejecutar_claude_en_pc para 'detectar rostros' o 'detectar manos' — para eso ya "
+                "existen el catálogo (ver_rostros.py / ver_manos.py, ventana en vivo) y las tools fijas "
+                "detectar_rostros_pc / detectar_manos_pc (una foto, solo datos, sin ventana). "
                 "Para scripts con cámara/ventana en vivo (los que el usuario cierra con 'q' o ESC) SIEMPRE deja "
-                "segundo_plano=True (el default) o el comando se queda colgado hasta que cierren la ventana. "
-                "Ejemplo: usuario dice 'ya lo probaste, vuélvelo a correr en la PC 3' → "
+                "segundo_plano=True (el default) al llamar ejecutar_script_en_pc, o el comando se queda colgado "
+                "hasta que cierren la ventana. "
+                "Ejemplo: usuario dice 'muéstrame en vivo los rostros de la PC 3' → listar_scripts_disponibles() "
+                "→ existe 'ver_rostros.py' → enviar_archivo_a_pc(3, 'ver_rostros.py') → "
                 "ejecutar_script_en_pc(3, 'ver_rostros.py'). "
+                "Ejemplo: usuario dice 'ya lo probaste, vuélvelo a correr en la PC 3' → "
+                "ejecutar_script_en_pc(3, 'ver_rostros.py') directo (ya está en esa PC, no hace falta reenviarlo). "
+                "Ejemplo: usuario dice 'quiero controlar el mouse de la PC 5 con la mano' → "
+                "enviar_archivo_a_pc(5, 'mouse_por_mano.py') → ejecutar_script_en_pc(5, 'mouse_por_mano.py'). "
+                "Avísale al usuario que para hacer clic tiene que cerrar el puño frente a la cámara, y que puede "
+                "cerrar el script con 'q' o ESC en la ventana de vista previa que se abre en esa PC. "
 
                 "## Base de datos ProyectDb\n"
                 "Tienes control total sobre la base de datos ProyectDb.db (SQLite). "

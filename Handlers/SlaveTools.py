@@ -6,13 +6,31 @@ from typing import Optional
 from Handlers.SlaveServerHandler import get_slave_server
 
 # Carpeta local del servidor donde viven los archivos que se mandan a las PCs
-# esclavas y donde se guardan los que se piden de vuelta.
+# esclavas (subidos con /subir-archivo o traidos de vuelta con obtener_archivo_de_pc).
+# No se versiona (esta en .gitignore) porque es contenido de runtime.
 ARCHIVOS_DIR = "archivosTransferidos"
+
+# Catalogo de scripts SEMILLA, versionado en el repo (ver_rostros.py, ver_manos.py, ...).
+# Se busca aca primero para no depender de que alguien los haya subido antes.
+CATALOGO_DIR = "scripts_catalogo"
 
 
 def _archivos_dir() -> str:
     os.makedirs(ARCHIVOS_DIR, exist_ok=True)
     return ARCHIVOS_DIR
+
+
+def _buscar_archivo(nombre: str) -> Optional[str]:
+    """Busca un archivo por nombre, primero en el catalogo versionado y despues
+    en la carpeta de archivos subidos/recibidos en runtime."""
+    nombre = os.path.basename(nombre)
+    candidato_catalogo = os.path.join(CATALOGO_DIR, nombre)
+    if os.path.isfile(candidato_catalogo):
+        return candidato_catalogo
+    candidato_runtime = os.path.join(_archivos_dir(), nombre)
+    if os.path.isfile(candidato_runtime):
+        return candidato_runtime
+    return None
 
 
 def pcs_conectadas() -> str:
@@ -252,11 +270,12 @@ async def _enviar_archivo_a_pc_async(numero_pc: int, nombre_archivo: str, timeou
         info = server.agent_info.get(agent_id, {})
         return f"Error: PC {numero_pc} ({info.get('hostname', '?')}) esta desconectada."
 
-    ruta = os.path.join(_archivos_dir(), os.path.basename(nombre_archivo))
-    if not os.path.isfile(ruta):
+    ruta = _buscar_archivo(nombre_archivo)
+    if not ruta:
         return (
-            f"Error: no se encontro '{nombre_archivo}' en la carpeta '{ARCHIVOS_DIR}' del servidor "
-            f"(subelo primero con POST /subir-archivo)."
+            f"Error: no se encontro '{nombre_archivo}' ni en el catálogo ('{CATALOGO_DIR}') ni en "
+            f"'{ARCHIVOS_DIR}' del servidor. Revisa listar_scripts_disponibles(), o subelo primero "
+            f"con POST /subir-archivo si es un archivo nuevo."
         )
 
     with open(ruta, "rb") as f:
@@ -534,3 +553,35 @@ def ejecutar_script_en_pc(numero_pc: int, ruta_script: str, argumentos: Optional
         _enviar_a_pc_con_respuesta_async(numero_pc, "run_script", params, timeout),
         wait_timeout=timeout + 15,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Catalogo de scripts (evita pedirle a Claude que regenere lo que ya existe)
+# --------------------------------------------------------------------------- #
+def listar_scripts_disponibles() -> str:
+    r"""Lista los scripts .py que YA existen en el catálogo del servidor.
+
+    Estos son scripts probados (p. ej. 'ver_rostros.py' para detección de rostros
+    en vivo, 'ver_manos.py' para manos) guardados en el servidor (carpeta versionada
+    'scripts_catalogo' y/o 'archivosTransferidos'). Úsala SIEMPRE antes de pedirle a
+    Claude Code que escriba un script de visión/automatización nuevo — si ya existe
+    uno que sirve para lo que pide el usuario, mándalo con
+    enviar_archivo_a_pc(numero_pc, nombre) y córrelo con ejecutar_script_en_pc(numero_pc,
+    nombre) en vez de generarlo de nuevo.
+    """
+    os.makedirs(CATALOGO_DIR, exist_ok=True)
+    del_catalogo = sorted(f for f in os.listdir(CATALOGO_DIR) if f.lower().endswith(".py"))
+    del_runtime = sorted(
+        f for f in os.listdir(_archivos_dir())
+        if f.lower().endswith(".py") and f not in del_catalogo
+    )
+
+    if not del_catalogo and not del_runtime:
+        return "No hay scripts en el catálogo todavía."
+
+    lineas = ["=== Scripts disponibles en el catálogo del servidor ==="]
+    for nombre in del_catalogo:
+        lineas.append(f"- {nombre}")
+    for nombre in del_runtime:
+        lineas.append(f"- {nombre} (subido en runtime)")
+    return "\n".join(lineas)

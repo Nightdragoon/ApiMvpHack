@@ -431,15 +431,13 @@ async def subir_archivo(file: UploadFile = File(...)):
 
 @app.get("/descargar-archivo/{nombre}", tags=["archivos"])
 async def descargar_archivo(nombre: str):
-    """Descarga un archivo de la carpeta 'archivosTransferidos' del servidor.
+    """Descarga un archivo del servidor: primero busca en el catálogo versionado
+    'scripts_catalogo', y si no está ahí, en 'archivosTransferidos' (subidos o
+    traídos de vuelta con obtener_archivo_de_pc)."""
+    from Handlers.SlaveTools import _buscar_archivo
 
-    Sirve tanto para bajar archivos que se van a mandar a un esclavo como
-    los que se pidieron de vuelta con obtener_archivo_de_pc.
-    """
-    from Handlers.SlaveTools import ARCHIVOS_DIR
-
-    path = os.path.join(ARCHIVOS_DIR, os.path.basename(nombre))
-    if not os.path.isfile(path):
+    path = _buscar_archivo(nombre)
+    if not path:
         raise HTTPException(404, "Archivo no encontrado")
     return FileResponse(path, filename=os.path.basename(nombre))
 
