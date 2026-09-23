@@ -17,6 +17,7 @@ from Handlers.SlaveTools import (
     ejecutar_claude_en_pc, pcs_conectadas, enviar_a_pc, enviar_a_pc_y_esperar, enviar_a_todas, verificar_claude_en_pc,
     enviar_archivo_a_pc, obtener_archivo_de_pc,
     detectar_rostros_pc, detectar_manos_pc, iniciar_stream_vision, detener_stream_vision, leer_stream_vision,
+    ejecutar_script_en_pc,
 )
 from Handlers.DbCrudHandler import (
     ejecutar_sql, listar_tablas, describir_tabla, crear_tabla, borrar_tabla,
@@ -1133,6 +1134,7 @@ class DeepagentsHandler:
             iniciar_stream_vision,
             detener_stream_vision,
             leer_stream_vision,
+            ejecutar_script_en_pc,
             self.crear_excel_desde_datos,
             self.enviar_archivo_whatsapp,
         ]
@@ -1320,6 +1322,14 @@ class DeepagentsHandler:
                 "eso: usa ejecutar_claude_en_pc(numero_pc, prompt) pidiéndole a Claude Code que escriba y corra un "
                 "script de Python con OpenCV/MediaPipe para esa tarea puntual en esa PC (ya tiene opencv-python "
                 "instalado, y mediapipe si aplica). "
+                "IMPORTANTE — no repitas ejecutar_claude_en_pc para lo mismo dos veces: si Claude ya creó y probó "
+                "un script en una PC (te lo va a decir, con el nombre del archivo, p. ej. 'ver_rostros.py'), la "
+                "SIGUIENTE vez que el usuario pida correrlo de nuevo usa ejecutar_script_en_pc(numero_pc, "
+                "'ver_rostros.py') en vez de volver a llamar a Claude — es instantáneo y no gasta tokens. "
+                "Para scripts con cámara/ventana en vivo (los que el usuario cierra con 'q' o ESC) SIEMPRE deja "
+                "segundo_plano=True (el default) o el comando se queda colgado hasta que cierren la ventana. "
+                "Ejemplo: usuario dice 'ya lo probaste, vuélvelo a correr en la PC 3' → "
+                "ejecutar_script_en_pc(3, 'ver_rostros.py'). "
 
                 "## Base de datos ProyectDb\n"
                 "Tienes control total sobre la base de datos ProyectDb.db (SQLite). "
