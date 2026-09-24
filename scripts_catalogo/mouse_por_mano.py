@@ -198,7 +198,11 @@ def main() -> None:
         sys.exit(1)
 
     cur_x, cur_y = screen_w / 2, screen_h / 2
-    puno_cerrado_antes = False
+    # Frames seguidos con el puño cerrado antes de contar como clic: filtra
+    # transiciones de un frame (p.ej. al armar el gesto de pistola/dos dedos,
+    # la mano puede pasar brevemente por "todo doblado" y se confundia con clic).
+    FRAMES_CLIC = 3
+    puno_frames = 0
     ultimo_click = 0.0
     margin = min(max(args.margin, 0.0), 0.45)
     start = time.monotonic()
@@ -246,7 +250,9 @@ def main() -> None:
                         if scroll_prev_y is None:
                             scroll_prev_y = ly  # primer frame del gesto: no scrollear de golpe
                         dy = ly - scroll_prev_y
-                        scroll_accum += -dy * args.scroll_sensitivity * 10
+                        # dy > 0 = mano bajo (ly crece hacia abajo). Mano arriba -> scroll hacia abajo
+                        # y mano abajo -> scroll hacia arriba (invertido, a pedido).
+                        scroll_accum += dy * args.scroll_sensitivity * 10
                         pasos = int(scroll_accum)
                         if pasos != 0:
                             pyautogui.scroll(pasos)
@@ -254,7 +260,7 @@ def main() -> None:
                         scroll_prev_y = ly
                         gesto = "PISTOLA" if _es_pistola(landmarks, dedos, pulgar) else "DOS DEDOS"
                         estado = f"SCROLL ({gesto})"
-                        puno_cerrado_antes = False
+                        puno_frames = 0
                     else:
                         scroll_prev_y = None
                         scroll_accum = 0.0
@@ -274,16 +280,16 @@ def main() -> None:
 
                         num_extendidos = _contar_extendidos(dedos)
                         puno_cerrado = num_extendidos == 0 and not pulgar
+                        puno_frames = puno_frames + 1 if puno_cerrado else 0
                         estado = "PUÑO CERRADO" if puno_cerrado else f"{num_extendidos} dedo(s) extendidos"
 
                         ahora = time.monotonic()
-                        if puno_cerrado and not puno_cerrado_antes and (ahora - ultimo_click) > args.click_cooldown:
+                        if puno_frames == FRAMES_CLIC and (ahora - ultimo_click) > args.click_cooldown:
                             pyautogui.click()
                             ultimo_click = ahora
                             estado += " -> CLIC"
-                        puno_cerrado_antes = puno_cerrado
                 else:
-                    puno_cerrado_antes = False
+                    puno_frames = 0
                     scroll_prev_y = None
                     scroll_accum = 0.0
 
