@@ -7,16 +7,23 @@ hasta que se cierre con 'q'/ESC en la ventana de vista previa).
 Uso:
     python mouse_por_mano.py [--camera N] [--no-preview]
                               [--smoothing 0.35] [--click-cooldown 0.6] [--margin 0.15]
+                              [--scroll-sensitivity 25]
 
 Como funciona:
 - Sigue UNA mano con MediaPipe HandLandmarker (API Tasks).
 - El cursor se mueve con un punto de referencia ESTABLE (promedio de la
   muñeca y los nudillos), no con la punta de un dedo, para que no salte de
   lugar cuando cierras el puño.
-- Mano ABIERTA (al menos un dedo extendido) = mueve el cursor.
+- Mano ABIERTA (al menos un dedo extendido, sin ser un gesto de scroll) =
+  mueve el cursor.
 - Mano CERRADA (puño, cero dedos extendidos) = un clic izquierdo. Solo hace
   clic en el instante en que la mano se cierra (no repite mientras la
   mantengas cerrada) y respeta un cooldown entre clics.
+- Gesto "PISTOLA" (pulgar + índice extendidos, medio/anular/meñique doblados)
+  o "DOS DEDOS" (índice + medio extendidos, tipo señal de victoria) = modo
+  SCROLL: el cursor se congela donde está y mover la mano arriba/abajo
+  scrollea la página (como la ruedita del mouse), sin necesidad de hacer
+  clic. Al soltar el gesto, vuelve a mover el cursor normal.
 - Ventana de vista previa (activada por default; --no-preview la quita) con
   los landmarks de la mano y el estado detectado. Se cierra con 'q' o ESC.
 
@@ -30,6 +37,7 @@ y lo cachea junto a este archivo (carpeta '_models/').
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -97,14 +105,48 @@ def _ensure_model() -> str:
     return _MODEL_PATH
 
 
-def _dedos_extendidos(landmarks) -> int:
-    """Cuenta dedos extendidos comparando la altura (y) de la punta contra
-    su articulacion PIP; en coordenadas de imagen, 'mas arriba' es 'y' menor."""
-    count = 0
-    for tip_idx, pip_idx in _DEDOS.values():
-        if landmarks[tip_idx].y < landmarks[pip_idx].y - 0.02:
-            count += 1
-    return count
+def _dist(a, b) -> float:
+    return math.hypot(a.x - b.x, a.y - b.y)
+
+
+def _dedos_extendidos(landmarks) -> dict:
+    """Devuelve {'index': bool, 'middle': bool, 'ring': bool, 'pinky': bool}
+    comparando la altura (y) de la punta contra su articulacion PIP; en
+    coordenadas de imagen, 'mas arriba' es 'y' menor."""
+    return {
+        nombre: landmarks[tip_idx].y < landmarks[pip_idx].y - 0.02
+        for nombre, (tip_idx, pip_idx) in _DEDOS.items()
+    }
+
+
+def _pulgar_extendido(landmarks) -> bool:
+    """El pulgar se dobla hacia los lados, no hacia arriba/abajo como los
+    demas dedos, asi que compara distancias en vez de altura: si la punta
+    del pulgar (4) esta bastante mas lejos del nudillo del meñique (17) que
+    la base del pulgar (2), esta extendido/separado de la palma."""
+    tip_dist = _dist(landmarks[4], landmarks[17])
+    base_dist = _dist(landmarks[2], landmarks[17])
+    return tip_dist > base_dist * 1.15
+
+
+def _contar_extendidos(dedos: dict) -> int:
+    return sum(1 for v in dedos.values() if v)
+
+
+def _es_pistola(landmarks, dedos: dict, pulgar: bool) -> bool:
+    """Pulgar + indice extendidos, medio/anular/meñique doblados."""
+    return (
+        pulgar
+        and dedos["index"]
+        and not dedos["middle"]
+        and not dedos["ring"]
+        and not dedos["pinky"]
+    )
+
+
+def _es_dos_dedos(dedos: dict) -> bool:
+    """Indice + medio extendidos (señal de victoria/tijeras), anular y meñique doblados."""
+    return dedos["index"] and dedos["middle"] and not dedos["ring"] and not dedos["pinky"]
 
 
 def _punto_referencia(landmarks) -> tuple[float, float]:
@@ -133,6 +175,10 @@ def main() -> None:
         help="Margen (0-0.45) del cuadro de la camara que ya cuenta como borde de pantalla, "
         "para no tener que llevar la mano hasta el borde real de la imagen",
     )
+    parser.add_argument(
+        "--scroll-sensitivity", type=float, default=25.0,
+        help="Que tanto scrollea por cada tramo que se mueve la mano en modo scroll (mas alto = mas sensible)",
+    )
     args = parser.parse_args()
 
     screen_w, screen_h = pyautogui.size()
@@ -157,6 +203,13 @@ def main() -> None:
     margin = min(max(args.margin, 0.0), 0.45)
     start = time.monotonic()
     last_ts = -1
+
+    # Estado del modo scroll: mientras se sostiene el gesto (pistola o dos
+    # dedos), el cursor se congela y el movimiento vertical de la mano se
+    # traduce en "clicks" de rueda de mouse (acumulados para no perder
+    # movimientos chicos entre frames).
+    scroll_prev_y = None
+    scroll_accum = 0.0
 
     try:
         with mp_vision.HandLandmarker.create_from_options(options) as landmarker:
@@ -184,31 +237,55 @@ def main() -> None:
                         _dibujar_mano(frame, landmarks)
 
                     lx, ly = _punto_referencia(landmarks)
-                    # Mapea el area util de la camara (descontando el margen) a toda la pantalla.
-                    nx = (lx - margin) / max(1e-6, (1 - 2 * margin))
-                    ny = (ly - margin) / max(1e-6, (1 - 2 * margin))
-                    nx = min(max(nx, 0.0), 1.0)
-                    ny = min(max(ny, 0.0), 1.0)
-
-                    target_x = min(max(nx * screen_w, 1), screen_w - 2)
-                    target_y = min(max(ny * screen_h, 1), screen_h - 2)
-
-                    cur_x += (target_x - cur_x) * (1 - args.smoothing)
-                    cur_y += (target_y - cur_y) * (1 - args.smoothing)
-                    pyautogui.moveTo(int(cur_x), int(cur_y))
-
                     dedos = _dedos_extendidos(landmarks)
-                    puno_cerrado = dedos == 0
-                    estado = "PUÑO CERRADO" if puno_cerrado else f"{dedos} dedo(s) extendidos"
+                    pulgar = _pulgar_extendido(landmarks)
+                    modo_scroll = _es_pistola(landmarks, dedos, pulgar) or _es_dos_dedos(dedos)
 
-                    ahora = time.monotonic()
-                    if puno_cerrado and not puno_cerrado_antes and (ahora - ultimo_click) > args.click_cooldown:
-                        pyautogui.click()
-                        ultimo_click = ahora
-                        estado += " -> CLIC"
-                    puno_cerrado_antes = puno_cerrado
+                    if modo_scroll:
+                        # Cursor congelado: no lo movemos mientras se scrollea.
+                        if scroll_prev_y is None:
+                            scroll_prev_y = ly  # primer frame del gesto: no scrollear de golpe
+                        dy = ly - scroll_prev_y
+                        scroll_accum += -dy * args.scroll_sensitivity * 10
+                        pasos = int(scroll_accum)
+                        if pasos != 0:
+                            pyautogui.scroll(pasos)
+                            scroll_accum -= pasos
+                        scroll_prev_y = ly
+                        gesto = "PISTOLA" if _es_pistola(landmarks, dedos, pulgar) else "DOS DEDOS"
+                        estado = f"SCROLL ({gesto})"
+                        puno_cerrado_antes = False
+                    else:
+                        scroll_prev_y = None
+                        scroll_accum = 0.0
+
+                        # Mapea el area util de la camara (descontando el margen) a toda la pantalla.
+                        nx = (lx - margin) / max(1e-6, (1 - 2 * margin))
+                        ny = (ly - margin) / max(1e-6, (1 - 2 * margin))
+                        nx = min(max(nx, 0.0), 1.0)
+                        ny = min(max(ny, 0.0), 1.0)
+
+                        target_x = min(max(nx * screen_w, 1), screen_w - 2)
+                        target_y = min(max(ny * screen_h, 1), screen_h - 2)
+
+                        cur_x += (target_x - cur_x) * (1 - args.smoothing)
+                        cur_y += (target_y - cur_y) * (1 - args.smoothing)
+                        pyautogui.moveTo(int(cur_x), int(cur_y))
+
+                        num_extendidos = _contar_extendidos(dedos)
+                        puno_cerrado = num_extendidos == 0 and not pulgar
+                        estado = "PUÑO CERRADO" if puno_cerrado else f"{num_extendidos} dedo(s) extendidos"
+
+                        ahora = time.monotonic()
+                        if puno_cerrado and not puno_cerrado_antes and (ahora - ultimo_click) > args.click_cooldown:
+                            pyautogui.click()
+                            ultimo_click = ahora
+                            estado += " -> CLIC"
+                        puno_cerrado_antes = puno_cerrado
                 else:
                     puno_cerrado_antes = False
+                    scroll_prev_y = None
+                    scroll_accum = 0.0
 
                 if not args.no_preview:
                     cv2.putText(
