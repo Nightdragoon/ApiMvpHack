@@ -7,7 +7,7 @@ hasta que se cierre con 'q'/ESC en la ventana de vista previa).
 Uso:
     python mouse_por_mano.py [--camera N] [--no-preview]
                               [--smoothing 0.35] [--click-cooldown 0.6] [--margin 0.15]
-                              [--scroll-sensitivity 70]
+                              [--scroll-sensitivity 100]
 
 Como funciona:
 - Sigue UNA mano con MediaPipe HandLandmarker (API Tasks).
@@ -176,7 +176,7 @@ def main() -> None:
         "para no tener que llevar la mano hasta el borde real de la imagen",
     )
     parser.add_argument(
-        "--scroll-sensitivity", type=float, default=70.0,
+        "--scroll-sensitivity", type=float, default=100.0,
         help="Que tanto scrollea por cada tramo que se mueve la mano en modo scroll (mas alto = mas sensible)",
     )
     args = parser.parse_args()
