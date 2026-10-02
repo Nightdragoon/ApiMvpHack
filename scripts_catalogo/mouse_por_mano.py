@@ -7,23 +7,23 @@ hasta que se cierre con 'q'/ESC en la ventana de vista previa).
 Uso:
     python mouse_por_mano.py [--camera N] [--no-preview]
                               [--smoothing 0.35] [--click-cooldown 0.6] [--margin 0.15]
-                              [--scroll-sensitivity 100]
+                              [--scroll-sensitivity 160] [--scroll-fingers 4]
+                              [--scroll-friction 0.9] [--scroll-boost 1.5]
 
 Como funciona:
 - Sigue UNA mano con MediaPipe HandLandmarker (API Tasks).
 - El cursor se mueve con un punto de referencia ESTABLE (promedio de la
   muñeca y los nudillos), no con la punta de un dedo, para que no salte de
   lugar cuando cierras el puño.
-- Mano ABIERTA (al menos un dedo extendido, sin ser un gesto de scroll) =
-  mueve el cursor.
+- Mano APUNTANDO (1 a 3 dedos extendidos, p.ej. solo el índice) = mueve el cursor.
 - Mano CERRADA (puño, cero dedos extendidos) = un clic izquierdo. Solo hace
   clic en el instante en que la mano se cierra (no repite mientras la
   mantengas cerrada) y respeta un cooldown entre clics.
-- Gesto "PISTOLA" (pulgar + índice extendidos, medio/anular/meñique doblados)
-  o "DOS DEDOS" (índice + medio extendidos, tipo señal de victoria) = modo
-  SCROLL: el cursor se congela donde está y mover la mano arriba/abajo
-  scrollea la página (como la ruedita del mouse), sin necesidad de hacer
-  clic. Al soltar el gesto, vuelve a mover el cursor normal.
+- Mano ABIERTA (toda la mano, >= --scroll-fingers dedos extendidos) = modo
+  SCROLL: el cursor se congela y mover la mano arriba/abajo scrollea la
+  página (como deslizar en un teléfono: mano arriba -> baja la página). Si
+  sueltas el gesto con un movimiento fuerte, el scroll sigue por INERCIA y
+  frena solo (flick), igual que en el celular. Un puño cancela la inercia.
 - Ventana de vista previa (activada por default; --no-preview la quita) con
   los landmarks de la mano y el estado detectado. Se cierra con 'q' o ESC.
 
@@ -133,22 +133,6 @@ def _contar_extendidos(dedos: dict) -> int:
     return sum(1 for v in dedos.values() if v)
 
 
-def _es_pistola(landmarks, dedos: dict, pulgar: bool) -> bool:
-    """Pulgar + indice extendidos, medio/anular/meñique doblados."""
-    return (
-        pulgar
-        and dedos["index"]
-        and not dedos["middle"]
-        and not dedos["ring"]
-        and not dedos["pinky"]
-    )
-
-
-def _es_dos_dedos(dedos: dict) -> bool:
-    """Indice + medio extendidos (señal de victoria/tijeras), anular y meñique doblados."""
-    return dedos["index"] and dedos["middle"] and not dedos["ring"] and not dedos["pinky"]
-
-
 def _punto_referencia(landmarks) -> tuple[float, float]:
     x = sum(landmarks[i].x for i in _PUNTOS_REFERENCIA) / len(_PUNTOS_REFERENCIA)
     y = sum(landmarks[i].y for i in _PUNTOS_REFERENCIA) / len(_PUNTOS_REFERENCIA)
@@ -176,8 +160,23 @@ def main() -> None:
         "para no tener que llevar la mano hasta el borde real de la imagen",
     )
     parser.add_argument(
-        "--scroll-sensitivity", type=float, default=100.0,
-        help="Que tanto scrollea por cada tramo que se mueve la mano en modo scroll (mas alto = mas sensible)",
+        "--scroll-sensitivity", type=float, default=160.0,
+        help="Que tanto scrollea por cada tramo que se mueve la mano en modo scroll (mas alto = mas rapido)",
+    )
+    parser.add_argument(
+        "--scroll-fingers", type=int, default=4,
+        help="Cuantos de los 4 dedos extendidos cuentan como 'mano abierta' para scrollear "
+        "(4 = toda la mano, 3 = gran mayoria)",
+    )
+    parser.add_argument(
+        "--scroll-friction", type=float, default=0.9,
+        help="Inercia tipo telefono: que tanto conserva el scroll al soltar el gesto "
+        "(0 = sin inercia/frena en seco, cerca de 1 = sigue mucho mas)",
+    )
+    parser.add_argument(
+        "--scroll-boost", type=float, default=1.5,
+        help="Multiplicador de la fuerza del flick: que tan grande es el scroll por inercia "
+        "al soltar con un movimiento fuerte",
     )
     args = parser.parse_args()
 
@@ -199,8 +198,8 @@ def main() -> None:
 
     cur_x, cur_y = screen_w / 2, screen_h / 2
     # Frames seguidos con el puño cerrado antes de contar como clic: filtra
-    # transiciones de un frame (p.ej. al armar el gesto de pistola/dos dedos,
-    # la mano puede pasar brevemente por "todo doblado" y se confundia con clic).
+    # transiciones de un frame (p.ej. al abrir/cerrar la mano para scrollear,
+    # puede pasar brevemente por "todo doblado" y se confundia con clic).
     FRAMES_CLIC = 3
     puno_frames = 0
     ultimo_click = 0.0
@@ -208,12 +207,17 @@ def main() -> None:
     start = time.monotonic()
     last_ts = -1
 
-    # Estado del modo scroll: mientras se sostiene el gesto (pistola o dos
-    # dedos), el cursor se congela y el movimiento vertical de la mano se
-    # traduce en "clicks" de rueda de mouse (acumulados para no perder
-    # movimientos chicos entre frames).
+    # Estado del modo scroll: mientras se sostiene el gesto (mano abierta), el
+    # cursor se congela y el movimiento vertical de la mano se traduce en
+    # "clicks" de rueda de mouse (acumulados para no perder movimientos chicos
+    # entre frames). scroll_vel guarda la velocidad suavizada para lanzar la
+    # inercia (flick) al soltar; momentum es el scroll residual que va frenando
+    # solo; was_scrolling detecta el instante exacto en que se suelta el gesto.
     scroll_prev_y = None
     scroll_accum = 0.0
+    scroll_vel = 0.0
+    momentum = 0.0
+    was_scrolling = False
 
     try:
         with mp_vision.HandLandmarker.create_from_options(options) as landmarker:
@@ -243,25 +247,55 @@ def main() -> None:
                     lx, ly = _punto_referencia(landmarks)
                     dedos = _dedos_extendidos(landmarks)
                     pulgar = _pulgar_extendido(landmarks)
-                    modo_scroll = _es_pistola(landmarks, dedos, pulgar) or _es_dos_dedos(dedos)
+                    num_extendidos = _contar_extendidos(dedos)
+                    puno_cerrado = num_extendidos == 0 and not pulgar
+                    # Mano abierta (toda la mano / gran mayoria de dedos) = scroll.
+                    modo_scroll = num_extendidos >= args.scroll_fingers
 
                     if modo_scroll:
                         # Cursor congelado: no lo movemos mientras se scrollea.
                         if scroll_prev_y is None:
                             scroll_prev_y = ly  # primer frame del gesto: no scrollear de golpe
                         dy = ly - scroll_prev_y
-                        # dy > 0 = mano bajo (ly crece hacia abajo). Mano arriba -> scroll hacia abajo
-                        # y mano abajo -> scroll hacia arriba (invertido, a pedido).
-                        scroll_accum += dy * args.scroll_sensitivity * 10
+                        # dy > 0 = mano baja (ly crece hacia abajo). Mano arriba -> scroll hacia abajo
+                        # y mano abajo -> scroll hacia arriba (como deslizar en un telefono).
+                        paso = dy * args.scroll_sensitivity * 10
+                        scroll_accum += paso
                         pasos = int(scroll_accum)
                         if pasos != 0:
                             pyautogui.scroll(pasos)
                             scroll_accum -= pasos
+                        # Velocidad suavizada: es lo que lanza la inercia al soltar.
+                        scroll_vel = scroll_vel * 0.4 + paso * 0.6
                         scroll_prev_y = ly
-                        gesto = "PISTOLA" if _es_pistola(landmarks, dedos, pulgar) else "DOS DEDOS"
-                        estado = f"SCROLL ({gesto})"
+                        was_scrolling = True
+                        momentum = 0.0
                         puno_frames = 0
+                        estado = "SCROLL (mano abierta)"
+                    elif was_scrolling or (abs(momentum) >= 1.0 and not puno_cerrado):
+                        # Acabamos de soltar el gesto: arranca la inercia con la
+                        # ultima velocidad; luego sigue frenando sola frame a frame.
+                        if was_scrolling:
+                            momentum = scroll_vel * args.scroll_boost
+                            was_scrolling = False
+                            scroll_prev_y = None
+                            scroll_vel = 0.0
+                        # Un puño corta la inercia en seco (para poder hacer clic ya).
+                        if puno_cerrado:
+                            momentum = 0.0
+                        scroll_accum += momentum
+                        pasos = int(scroll_accum)
+                        if pasos != 0:
+                            pyautogui.scroll(pasos)
+                            scroll_accum -= pasos
+                        momentum *= args.scroll_friction
+                        if abs(momentum) < 1.0:
+                            momentum = 0.0
+                            scroll_accum = 0.0
+                        puno_frames = 0
+                        estado = f"INERCIA ({int(momentum)})"
                     else:
+                        momentum = 0.0
                         scroll_prev_y = None
                         scroll_accum = 0.0
 
@@ -278,8 +312,6 @@ def main() -> None:
                         cur_y += (target_y - cur_y) * (1 - args.smoothing)
                         pyautogui.moveTo(int(cur_x), int(cur_y))
 
-                        num_extendidos = _contar_extendidos(dedos)
-                        puno_cerrado = num_extendidos == 0 and not pulgar
                         puno_frames = puno_frames + 1 if puno_cerrado else 0
                         estado = "PUÑO CERRADO" if puno_cerrado else f"{num_extendidos} dedo(s) extendidos"
 
@@ -292,6 +324,9 @@ def main() -> None:
                     puno_frames = 0
                     scroll_prev_y = None
                     scroll_accum = 0.0
+                    scroll_vel = 0.0
+                    momentum = 0.0
+                    was_scrolling = False
 
                 if not args.no_preview:
                     cv2.putText(
