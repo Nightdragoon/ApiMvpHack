@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
@@ -893,7 +894,7 @@ async def deepagents(text: str):
     try:
         handler = DeepagentsHandler()
         mensaje = handler.run(text)
-   
+
         handlers_audio = ElevenLabsHandler()
         ruta_audio = handlers_audio.generar_audio(mensaje)
         return FileResponse(
@@ -901,6 +902,17 @@ async def deepagents(text: str):
             media_type="audio/mpeg",
             filename="respuesta_deepagents.mp3"
         )
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
+
+@app.get("/deepagents-texto", tags=["ia"])
+async def deepagents_texto(text: str, thread_id: str = "default"):
+    """Habla con Uzi y devuelve SOLO texto (sin generar audio)."""
+    try:
+        handler = DeepagentsHandler()
+        mensaje = await asyncio.to_thread(handler.run, text, thread_id)
+        return {"IsSuccess": True, "message": mensaje}
     except Exception as e:
         return {"IsSuccess": False, "message": str(e)}
 

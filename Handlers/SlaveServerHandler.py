@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import uuid
 from collections import deque
 from datetime import datetime
@@ -28,6 +29,12 @@ class SlaveServerHandler:
         # Las tools del modelo corren en otro hilo y necesitan agendar el
         # send aqui via run_coroutine_threadsafe, no crear un loop nuevo.
         self.loop: Optional[asyncio.AbstractEventLoop] = None
+        # Instancia de Uzi (DeepagentsHandler) reutilizada para los comandos de
+        # voz. Se crea perezosamente (import tardio) para evitar el ciclo de
+        # imports con SlaveTools, y se protege con un lock porque run() corre en
+        # un hilo del threadpool.
+        self._uzi_handler = None
+        self._uzi_lock = threading.Lock()
 
     async def handle(self, ws: "WebSocket"):
         await ws.accept()
@@ -109,6 +116,13 @@ class SlaveServerHandler:
                     self._handle_stream_event(agent_id, msg)
                     continue
 
+                # Comando por voz (wake word "uzi" en el esclavo): lo procesa
+                # Uzi y le regresa la respuesta a ESA PC. Se corre en una task
+                # aparte para no bloquear la recepcion de otros mensajes.
+                if msg_type == "voice_command":
+                    asyncio.create_task(self._procesar_voz(agent_id, msg))
+                    continue
+
                 print(f"[SLAVE] Respuesta de {agent_id}: {msg}")
                 if msg_id:
                     if msg_id in self.pending_results:
@@ -138,6 +152,48 @@ class SlaveServerHandler:
         self.stream_agent[stream_id] = agent_id
         events = self.stream_events.setdefault(stream_id, deque(maxlen=30))
         events.append(msg)
+
+    def _get_uzi(self):
+        """Devuelve la instancia de Uzi (DeepagentsHandler), creandola una sola
+        vez. Import tardio para evitar el ciclo con SlaveTools."""
+        with self._uzi_lock:
+            if self._uzi_handler is None:
+                from Handlers.DeepagentsHandler import DeepagentsHandler
+                self._uzi_handler = DeepagentsHandler()
+            return self._uzi_handler
+
+    async def _procesar_voz(self, agent_id: str, msg: dict):
+        """Corre un comando de voz en Uzi y le regresa la respuesta a esa PC."""
+        texto = (msg.get("text") or "").strip()
+        numero = self.numero_por_agent_id.get(agent_id)
+        print(f"[SLAVE] Comando de voz de PC {numero} ({agent_id}): {texto!r}")
+        if not texto:
+            return
+
+        # Contexto para que Uzi actue sobre la PC que hablo si no se especifica otra.
+        prompt = (
+            f"[Comando hablado por voz por el usuario frente a la PC {numero} "
+            f"(agent_id {agent_id}). Si la orden no dice en que PC hacerlo, hazlo "
+            f"en la PC {numero}. Responde corto, para leerse en una notificacion.]\n"
+            f"{texto}"
+        )
+        try:
+            handler = self._get_uzi()
+            respuesta = await asyncio.to_thread(handler.run, prompt, f"voz-{agent_id}")
+        except Exception as e:
+            print(f"[SLAVE] Error procesando voz de {agent_id}: {e}")
+            respuesta = f"Hubo un error procesando tu comando: {e}"
+
+        ws = self.agents.get(agent_id)
+        if ws is None:
+            print(f"[SLAVE] PC {numero} ya no esta conectada; no se envia respuesta de voz")
+            return
+        try:
+            await ws.send_text(json.dumps(
+                {"type": "voice_reply", "status": "ok", "text": respuesta}
+            ))
+        except Exception as e:
+            print(f"[SLAVE] Error enviando respuesta de voz a {agent_id}: {e}")
 
     def _desconectar(self, agent_id: str):
         numero = self.numero_por_agent_id.get(agent_id)
