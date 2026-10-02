@@ -7,9 +7,9 @@ hasta que se cierre con 'q'/ESC en la ventana de vista previa).
 Uso:
     python mouse_por_mano.py [--camera N] [--no-preview]
                               [--smoothing 0.35] [--click-cooldown 0.6] [--margin 0.15]
-                              [--scroll-sensitivity 160] [--open-fingers 4]
+                              [--scroll-sensitivity 160]
                               [--scroll-friction 0.9] [--scroll-boost 1.5]
-                              [--precision-speed 0.7] [--click-tilt 35]
+                              [--precision-speed 0.7]
 
 Como funciona (todo con UNA mano):
 - Sigue la mano con MediaPipe HandLandmarker (API Tasks).
@@ -19,14 +19,14 @@ Como funciona (todo con UNA mano):
 - MOVER CURSOR: cualquier mano que no esté scrolleando lo mueve. Con la mano
   abierta va a velocidad MÁXIMA; con UN SOLO dedo extendido baja a modo
   PRECISIÓN (más lento, --precision-speed) para apuntar fino.
-- SCROLL: mano ABIERTA apuntando hacia ABAJO (los dedos para abajo, >=
-  --open-fingers dedos extendidos). El cursor se congela y mover la mano
-  arriba/abajo scrollea (como deslizar en un teléfono). Al volver los dedos
-  hacia arriba sales del scroll. Si sueltas con un movimiento fuerte, sigue
-  por INERCIA y frena solo (flick); mostrar un solo dedo corta la inercia.
-- CLICK: girar la muñeca a la DERECHA (inclinar la mano a la derecha hasta
-  pasar --click-tilt grados). Hay que volver a enderezar la mano para poder
-  hacer otro clic, y respeta un cooldown entre clics.
+- SCROLL: DOS dedos (índice + medio extendidos, tipo señal de victoria). El
+  cursor se congela y mover la mano arriba/abajo scrollea (como deslizar en un
+  teléfono). Al bajar los dedos sales del scroll. Si sueltas con un movimiento
+  fuerte, sigue por INERCIA y frena solo (flick); mostrar un solo dedo o el
+  puño corta la inercia.
+- CLICK: CERRAR la mano (puño, cero dedos extendidos). Hace clic en el
+  instante en que la mano se cierra (no repite mientras la mantengas cerrada)
+  y respeta un cooldown entre clics.
 - Ventana de vista previa (activada por default; --no-preview la quita) con
   los landmarks de la mano y el estado detectado. Se cierra con 'q' o ESC.
 
@@ -122,20 +122,10 @@ def _contar_extendidos(dedos: dict) -> int:
     return sum(1 for v in dedos.values() if v)
 
 
-def _apunta_abajo(landmarks) -> bool:
-    """True si la mano apunta hacia abajo (el nudillo del dedo medio, 9, queda
-    por debajo de la muñeca, 0). Con la mano abierta esto distingue el modo
-    SCROLL (dedos hacia abajo) del modo cursor (dedos hacia arriba)."""
-    return (landmarks[9].y - landmarks[0].y) > 0.04
-
-
-def _inclinacion(landmarks) -> float:
-    """Inclinacion de la mano en grados: 0 = vertical (dedos hacia arriba),
-    positivo = inclinada a la DERECHA, negativo = a la izquierda. Se usa para
-    el click: girar la muñeca a la derecha pasa el umbral y dispara el clic."""
-    dx = landmarks[9].x - landmarks[0].x
-    dy = landmarks[9].y - landmarks[0].y
-    return math.degrees(math.atan2(dy, dx)) + 90.0
+def _es_dos_dedos(dedos: dict) -> bool:
+    """True si solo el indice y el medio estan extendidos (señal de victoria/
+    tijeras), con anular y meñique doblados. Es el gesto del modo SCROLL."""
+    return dedos["index"] and dedos["middle"] and not dedos["ring"] and not dedos["pinky"]
 
 
 def _punto_referencia(landmarks) -> tuple[float, float]:
@@ -169,19 +159,9 @@ def main() -> None:
         help="Que tanto scrollea por cada tramo que se mueve la mano en modo scroll (mas alto = mas rapido)",
     )
     parser.add_argument(
-        "--open-fingers", type=int, default=4,
-        help="Cuantos de los 4 dedos extendidos cuentan como 'mano abierta' "
-        "(4 = toda la mano, 3 = gran mayoria). Mano abierta = cursor rapido; "
-        "mano abierta apuntando abajo = scroll",
-    )
-    parser.add_argument(
         "--precision-speed", type=float, default=0.7,
         help="Velocidad del cursor con UN SOLO dedo extendido (modo precision), "
         "como fraccion de la velocidad maxima (1.0 = igual que mano abierta)",
-    )
-    parser.add_argument(
-        "--click-tilt", type=float, default=35.0,
-        help="Grados que hay que girar/inclinar la mano a la derecha para hacer click",
     )
     parser.add_argument(
         "--scroll-friction", type=float, default=0.9,
@@ -213,11 +193,11 @@ def main() -> None:
 
     cur_x, cur_y = screen_w / 2, screen_h / 2
     ultimo_click = 0.0
-    # click_armado: el click por giro de muñeca es "edge-triggered". Solo se
-    # dispara al cruzar --click-tilt hacia la derecha, y hay que volver a
-    # enderezar la mano (bajar del umbral) para rearmarlo. Asi no clickea en
-    # bucle mientras tengas la mano inclinada.
-    click_armado = True
+    # Frames seguidos con el puño cerrado antes de contar como clic: filtra
+    # transiciones de un frame (al cerrar la mano puede pasar brevemente por
+    # "todo doblado" sin que sea un clic de verdad).
+    FRAMES_CLIC = 3
+    puno_frames = 0
     margin = min(max(args.margin, 0.0), 0.45)
     start = time.monotonic()
     last_ts = -1
@@ -262,10 +242,9 @@ def main() -> None:
                     lx, ly = _punto_referencia(landmarks)
                     dedos = _dedos_extendidos(landmarks)
                     num_extendidos = _contar_extendidos(dedos)
-                    mano_abierta = num_extendidos >= args.open_fingers
-                    # SCROLL = mano abierta apuntando hacia abajo (dedos para abajo).
-                    # La misma mano abierta pero hacia arriba mueve el cursor.
-                    modo_scroll = mano_abierta and _apunta_abajo(landmarks)
+                    # SCROLL = dos dedos (indice + medio). La mano abierta mueve
+                    # el cursor; un dedo lo mueve en precision; el puño hace clic.
+                    modo_scroll = _es_dos_dedos(dedos)
 
                     if modo_scroll:
                         # Cursor congelado: no lo movemos mientras se scrollea.
@@ -285,7 +264,8 @@ def main() -> None:
                         scroll_prev_y = ly
                         was_scrolling = True
                         momentum = 0.0
-                        estado = "SCROLL (mano abierta abajo)"
+                        puno_frames = 0
+                        estado = "SCROLL (dos dedos)"
                     elif was_scrolling or (abs(momentum) >= 1.0 and num_extendidos > 1):
                         # Acabamos de soltar el gesto: arranca la inercia con la
                         # ultima velocidad; luego sigue frenando sola frame a frame.
@@ -306,6 +286,7 @@ def main() -> None:
                         if abs(momentum) < 1.0:
                             momentum = 0.0
                             scroll_accum = 0.0
+                        puno_frames = 0
                         estado = f"INERCIA ({int(momentum)})"
                     else:
                         momentum = 0.0
@@ -327,30 +308,28 @@ def main() -> None:
                         cur_y += (target_y - cur_y) * (1 - args.smoothing) * factor
                         pyautogui.moveTo(int(cur_x), int(cur_y))
 
-                        modo = "PRECISION" if num_extendidos == 1 else "cursor"
-                        estado = f"{modo} ({num_extendidos} dedo(s))"
+                        # CLICK = cerrar la mano (puño, cero dedos extendidos).
+                        puno_cerrado = num_extendidos == 0
+                        puno_frames = puno_frames + 1 if puno_cerrado else 0
+                        if puno_cerrado:
+                            estado = "PUÑO CERRADO"
+                        elif num_extendidos == 1:
+                            estado = "PRECISION (1 dedo)"
+                        else:
+                            estado = f"cursor ({num_extendidos} dedos)"
 
-                        # CLICK por giro de muñeca a la derecha (edge-triggered).
-                        tilt = _inclinacion(landmarks)
                         ahora = time.monotonic()
-                        if tilt < args.click_tilt * 0.4:
-                            click_armado = True
-                        if (
-                            click_armado
-                            and tilt > args.click_tilt
-                            and (ahora - ultimo_click) > args.click_cooldown
-                        ):
+                        if puno_frames == FRAMES_CLIC and (ahora - ultimo_click) > args.click_cooldown:
                             pyautogui.click()
                             ultimo_click = ahora
-                            click_armado = False
                             estado += " -> CLIC"
                 else:
+                    puno_frames = 0
                     scroll_prev_y = None
                     scroll_accum = 0.0
                     scroll_vel = 0.0
                     momentum = 0.0
                     was_scrolling = False
-                    click_armado = True
 
                 if not args.no_preview:
                     cv2.putText(
