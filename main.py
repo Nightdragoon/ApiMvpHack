@@ -39,6 +39,7 @@ from Handlers.TelegramHandler import process_update, get_bot_info
 from Handlers.WhatsAppHandler import process_whatsapp_event, set_evolution_webhook
 from Handlers.ClassroomHandler import ClassroomHandler
 from Handlers.SlaveServerHandler import get_slave_server
+from Handlers.PhoneControlHandler import get_phone_control, ejecutar_en_pc, preguntar_a_uzi
 from Handlers.CalendarHandler import CalendarHandler
 from Dtos.CrearEventoCalendarDto import CrearEventoCalendarDto
 
@@ -408,6 +409,66 @@ async def websocket_pagina(websocket: WebSocket):
 async def websocket_esclavo(websocket: WebSocket):
     server = get_slave_server()
     await server.handle(websocket)
+
+
+# --------------------------------------------------------------------------- #
+# App de telefono (uzi_apk): lista de PCs, control remoto y chat con Uzi
+# --------------------------------------------------------------------------- #
+class ComandoEsclavoDto(BaseModel):
+    accion: str
+    params: dict = Field(default_factory=dict)
+    # Si es False, el comando se dispara sin esperar la respuesta del esclavo
+    # (modo control: mouse, scroll, clics).
+    esperar: bool = True
+    timeout: float = 30
+
+
+@app.websocket("/ws-control")
+async def websocket_control(websocket: WebSocket, token: str = ""):
+    """Canal de la app del telefono: control tipo Wii + chat con Uzi."""
+    await get_phone_control().handle(websocket, token)
+
+
+@app.get("/esclavos", tags=["esclavos"])
+async def listar_esclavos():
+    """PCs con uzi_esclavo que se han conectado (numero, hostname, online)."""
+    return {"IsSuccess": True, "pcs": get_slave_server().get_pcs()}
+
+
+@app.post("/esclavos/{numero}/comando", tags=["esclavos"])
+async def comando_esclavo(numero: int, dto: ComandoEsclavoDto):
+    """Manda una accion a una PC esclava desde la app (fallback HTTP del WS)."""
+    resultado = await ejecutar_en_pc(
+        numero, dto.accion, dto.params, esperar=dto.esperar, timeout=dto.timeout
+    )
+    return {"IsSuccess": resultado.get("status") == "ok", **resultado}
+
+
+@app.get("/uzi/chat", tags=["esclavos"])
+async def uzi_chat(text: str, pc: Optional[int] = None, thread_id: Optional[str] = None):
+    """Habla con Uzi por texto. Si viene `pc`, Uzi actua sobre esa PC."""
+    try:
+        respuesta = await preguntar_a_uzi(text, pc, thread_id)
+        return {"IsSuccess": True, "message": respuesta}
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
+
+
+@app.get("/uzi/chat-audio", tags=["esclavos"])
+async def uzi_chat_audio(text: str, pc: Optional[int] = None, thread_id: Optional[str] = None):
+    """Igual que /uzi/chat pero devuelve la respuesta hablada con la voz de Uzi."""
+    try:
+        respuesta = await preguntar_a_uzi(text, pc, thread_id)
+        handler_audio = ElevenLabsHandler()
+        ruta_audio = await asyncio.to_thread(handler_audio.generar_audio, respuesta)
+        return FileResponse(
+            path=ruta_audio,
+            media_type="audio/mpeg",
+            filename="uzi.mp3",
+            headers={"X-Uzi-Texto": respuesta.encode("ascii", "ignore").decode()},
+        )
+    except Exception as e:
+        return {"IsSuccess": False, "message": str(e)}
 
 
 @app.post("/subir-archivo", tags=["archivos"])
