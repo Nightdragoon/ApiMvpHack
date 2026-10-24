@@ -115,7 +115,7 @@ async def process_update(data: dict):
             # esclavos ni resolver el run_coroutine_threadsafe de las tools.
             response = await asyncio.to_thread(
                 handler.run, f"{text}",
-                historial=historial, thread_id=chat_id_str, memoria_largoplazo=memoria_larga
+                historial=historial, thread_id=chat_id_str, memoria_largoplazo=memoria_larga, channel="telegram"
             )
 
         except Exception as e:

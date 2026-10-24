@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 import os
 import asyncio
 import re
+import contextvars
+import time
 from datetime import datetime
 from typing import Annotated
 from langchain_ollama import ChatOllama
@@ -18,7 +20,7 @@ from Handlers.SlaveTools import (
     enviar_archivo_a_pc, obtener_archivo_de_pc,
     detectar_rostros_pc, detectar_manos_pc, iniciar_stream_vision, detener_stream_vision, leer_stream_vision,
     ejecutar_script_en_pc, listar_scripts_disponibles,
-    listar_scripts_corriendo_en_pc, detener_script_en_pc,
+    listar_scripts_corriendo_en_pc, detener_script_en_pc, pedir_respuesta_cruda_de_pc,
 )
 from Handlers.DbCrudHandler import (
     ejecutar_sql, listar_tablas, describir_tabla, crear_tabla, borrar_tabla,
@@ -44,6 +46,78 @@ from Handlers.ArduinoHanlder import ArduinoHandler
 from Handlers.EmotionServerHandler import EmotionServerHandler
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+# Contexto del chat/origen para saber a dónde responder cuando una tool
+# envía archivos (screenshot, documentos, etc.). Evita depender de variables
+# globales que se sobreescriben con mensajes simultáneos.
+current_channel = contextvars.ContextVar("current_channel", default=None)
+current_whatsapp_chat = contextvars.ContextVar("current_whatsapp_chat", default=None)
+current_telegram_chat = contextvars.ContextVar("current_telegram_chat", default=None)
+
+
+def _enviar_archivo_whatsapp_func(numero_destino: str, ruta_archivo: str, caption: str = "") -> str:
+    """Envía un archivo por WhatsApp usando Evolution API. Función de módulo para
+    poder reusarla desde tools que no pueden depender de self."""
+    import mimetypes
+    try:
+        numero = re.sub(r'\D', '', numero_destino)
+        if not os.path.exists(ruta_archivo):
+            return json.dumps({"error": f"El archivo no existe: {ruta_archivo}"}, ensure_ascii=False)
+        mime_type, _ = mimetypes.guess_type(ruta_archivo)
+        if not mime_type:
+            mime_type = "application/octet-stream"
+        if mime_type.startswith("image/"):
+            mediatype = "image"
+        elif mime_type.startswith("video/"):
+            mediatype = "video"
+        elif mime_type.startswith("audio/"):
+            mediatype = "audio"
+        else:
+            mediatype = "document"
+        with open(ruta_archivo, "rb") as f:
+            media_base64 = base64.b64encode(f.read()).decode("utf-8")
+        url = "http://localhost:8080/message/sendMedia/prueba"
+        headers = {"Content-Type": "application/json", "apikey": "429683C4C977415CAAFCCE10F7D57E11"}
+        body = {
+            "number": numero,
+            "mediatype": mediatype,
+            "media": media_base64,
+            "caption": caption,
+            "fileName": os.path.basename(ruta_archivo)
+        }
+        response = requests.post(url, json=body, headers=headers, timeout=30)
+        return json.dumps({"status_code": response.status_code, "response": response.text}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+def _enviar_archivo_telegram_func(ruta_archivo: str, caption: str = "", chat_id=None) -> str:
+    """Envía un archivo por Telegram. Función de módulo para reusar sin self."""
+    try:
+        from Handlers.TelegramHandler import bot, get_current_chat_id
+
+        chat_destino = chat_id
+        if not chat_destino:
+            chat_destino = current_telegram_chat.get()
+        if not chat_destino:
+            chat_destino = get_current_chat_id()
+        if bot is None:
+            return '{"error": "Bot de Telegram no configurado"}'
+        if chat_destino is None:
+            return '{"error": "No hay un chat activo de Telegram. El usuario debe escribir algo al bot primero."}'
+        if not os.path.exists(ruta_archivo):
+            return f'{{"error": "Archivo no encontrado: {ruta_archivo}"}}'
+
+        async def _send():
+            with open(ruta_archivo, "rb") as f:
+                await bot.send_document(chat_id=int(chat_destino), document=f, caption=caption if caption else None)
+
+        asyncio.run(_send())
+        return json.dumps({"ok": True, "message": f"Archivo enviado a Telegram: {ruta_archivo}"}, ensure_ascii=False)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
 class DeepagentsHandler:
@@ -666,40 +740,15 @@ class DeepagentsHandler:
 
 
     @tool
-    def enviar_archivo_telegram(ruta_archivo: str, caption: str = "") -> str:
+    def enviar_archivo_telegram(ruta_archivo: str, caption: str = "", chat_id: str = "") -> str:
         """Envía un archivo (documento, imagen, video, audio) al chat de Telegram autorizado.
         ruta_archivo: ruta completa del archivo en el servidor.
         caption: texto opcional para acompañar el archivo (ej. nombre o descripción).
+        chat_id: opcional. Si no se proporciona, se usa el chat de origen (desde donde escribieron a Uzi)
+        o el chat activo global como último recurso.
         Usa esta herramienta cuando el usuario pida 'enviar', 'mandar' o 'mándalo' por Telegram."""
-        print(f"[TOOL - enviar_archivo_telegram] INICIO - ruta='{ruta_archivo}', caption='{caption}'")
-        try:
-            from Handlers.TelegramHandler import bot, get_current_chat_id
-
-            chat_id = get_current_chat_id()
-            if bot is None:
-                print(f"[TOOL] ERROR: Bot no configurado")
-                return '{"error": "Bot de Telegram no configurado"}'
-            if chat_id is None:
-                print(f"[TOOL] ERROR: No hay chat activo")
-                return '{"error": "No hay un chat activo de Telegram. El usuario debe escribir algo al bot primero."}'
-            if not os.path.exists(ruta_archivo):
-                print(f"[TOOL] ERROR: Archivo no existe")
-                return f'{{"error": "Archivo no encontrado: {ruta_archivo}"}}'
-
-            print(f"[TOOL] Archivo: {os.path.getsize(ruta_archivo)} bytes, enviando a chat_id={chat_id}")
-
-            async def _send():
-                with open(ruta_archivo, "rb") as f:
-                    await bot.send_document(chat_id=chat_id, document=f, caption=caption if caption else None)
-
-            asyncio.run(_send())
-            print(f"[TOOL] Envío completado OK")
-            return json.dumps({"ok": True, "message": f"Archivo enviado a Telegram: {ruta_archivo}"}, ensure_ascii=False)
-        except Exception as e:
-            print(f"[TOOL] EXCEPCION: {e}")
-            import traceback
-            traceback.print_exc()
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        print(f"[TOOL - enviar_archivo_telegram] INICIO - ruta='{ruta_archivo}', caption='{caption}', chat_id='{chat_id}'")
+        return _enviar_archivo_telegram_func(ruta_archivo, caption, chat_id)
 
     @tool
     def registrar_emotion(emotion: str, mensaje: str) -> str:
@@ -1035,37 +1084,88 @@ class DeepagentsHandler:
         ruta_archivo: ruta completa del archivo en el servidor (ej. '/home/Night/github/ApiMvpHack/Exceles/reporte.xlsx')
         caption: texto opcional para acompañar el archivo.
         Usa esta herramienta cuando el usuario pida 'enviar', 'mandar' o 'mandasela' un archivo/Excel/reporte por WhatsApp."""
-        import mimetypes
+        return _enviar_archivo_whatsapp_func(numero_destino, ruta_archivo, caption)
+
+    @tool
+    def pedir_screenshot_de_pc(numero_pc: int, numero_destino: str = "") -> str:
+        """Pide una captura de pantalla a una PC esclava conectada y la envía por WhatsApp o Telegram.
+
+        numero_pc: número de la PC conectada (según pcs_conectadas).
+        numero_destino: opcional, solo para WhatsApp. Si no se proporciona, se envía al chat de origen
+        (desde donde escribieron a Uzi). En Telegram siempre se envía al chat de origen.
+
+        Usa esta herramienta cuando el usuario pida 'screenshot', 'captura de pantalla', 'mándame la pantalla'
+        o similar de una PC conectada.
+        """
+        import base64
+        import tempfile
+
+        canal = current_channel.get()
+
+        # Determinar destino según canal.
+        if canal == "whatsapp":
+            destino = numero_destino or current_whatsapp_chat.get()
+            if not destino:
+                return json.dumps({"error": "No se pudo determinar el número de WhatsApp de origen."}, ensure_ascii=False)
+        elif canal == "telegram":
+            destino = current_telegram_chat.get()
+            if not destino:
+                return json.dumps({"error": "No se pudo determinar el chat de Telegram de origen."}, ensure_ascii=False)
+        else:
+            return json.dumps({"error": "No sé por qué canal enviar la imagen. El usuario debe escribir por WhatsApp o Telegram."}, ensure_ascii=False)
+
+        # Pedir screenshot al esclavo.
         try:
-            numero = re.sub(r'\D', '', numero_destino)
-            if not os.path.exists(ruta_archivo):
-                return json.dumps({"error": f"El archivo no existe: {ruta_archivo}"}, ensure_ascii=False)
-            mime_type, _ = mimetypes.guess_type(ruta_archivo)
-            if not mime_type:
-                mime_type = "application/octet-stream"
-            if mime_type.startswith("image/"):
-                mediatype = "image"
-            elif mime_type.startswith("video/"):
-                mediatype = "video"
-            elif mime_type.startswith("audio/"):
-                mediatype = "audio"
-            else:
-                mediatype = "document"
-            with open(ruta_archivo, "rb") as f:
-                media_base64 = base64.b64encode(f.read()).decode("utf-8")
-            url = "http://localhost:8080/message/sendMedia/prueba"
-            headers = {"Content-Type": "application/json", "apikey": "429683C4C977415CAAFCCE10F7D57E11"}
-            body = {
-                "number": numero,
-                "mediatype": mediatype,
-                "media": media_base64,
-                "caption": caption,
-                "fileName": os.path.basename(ruta_archivo)
-            }
-            response = requests.post(url, json=body, headers=headers, timeout=30)
-            return json.dumps({"status_code": response.status_code, "response": response.text}, ensure_ascii=False)
+            res = pedir_respuesta_cruda_de_pc(numero_pc, "screenshot", {}, timeout=30)
         except Exception as e:
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
+            return json.dumps({"error": f"Error pidiendo screenshot a la PC {numero_pc}: {e}"}, ensure_ascii=False)
+
+        if not isinstance(res, dict) or res.get("status") != "ok":
+            error_msg = res.get("result") if isinstance(res, dict) else str(res)
+            return json.dumps({"error": f"La PC {numero_pc} no pudo enviar la screenshot: {error_msg}"}, ensure_ascii=False)
+
+        resultado = res.get("result", {})
+        img_b64 = resultado.get("base64") or resultado.get("data")
+        if not img_b64:
+            return json.dumps({"error": "La PC respondió sin imagen en base64."}, ensure_ascii=False)
+
+        # Guardar temporalmente.
+        timestamp = int(time.time())
+        nombre_archivo = f"screenshot_pc{numero_pc}_{timestamp}.png"
+        carpeta = "archivosTransferidos"
+        os.makedirs(carpeta, exist_ok=True)
+        ruta = os.path.join(carpeta, nombre_archivo)
+
+        try:
+            with open(ruta, "wb") as f:
+                f.write(base64.b64decode(img_b64))
+        except Exception as e:
+            return json.dumps({"error": f"Error guardando la imagen: {e}"}, ensure_ascii=False)
+
+        # Enviar y borrar.
+        try:
+            caption = f"Screenshot de la PC {numero_pc}"
+            if canal == "whatsapp":
+                respuesta_envio = _enviar_archivo_whatsapp_func(destino, ruta, caption)
+            else:  # telegram
+                respuesta_envio = _enviar_archivo_telegram_func(ruta, caption, chat_id=destino)
+        except Exception as e:
+            try:
+                os.remove(ruta)
+            except Exception:
+                pass
+            return json.dumps({"error": f"Error enviando la imagen: {e}"}, ensure_ascii=False)
+        finally:
+            try:
+                os.remove(ruta)
+            except Exception:
+                pass
+
+        return json.dumps({
+            "ok": True,
+            "message": f"Screenshot de la PC {numero_pc} enviada por {canal}.",
+            "envio": respuesta_envio if 'respuesta_envio' in locals() else None,
+        }, ensure_ascii=False)
 
     # ──────────────────────── GRAPH / AGENT ────────────────────────
 
@@ -1141,6 +1241,7 @@ class DeepagentsHandler:
             detener_script_en_pc,
             self.crear_excel_desde_datos,
             self.enviar_archivo_whatsapp,
+            self.pedir_screenshot_de_pc,
         ]
 
         llm = ChatDeepSeek(
@@ -1243,6 +1344,13 @@ class DeepagentsHandler:
                 "Ejemplo: usuario dice 'dame la info de la PC 1' → enviar_a_pc_y_esperar(1, 'info', {}). "
                 "Para 'screenshot' usa siempre enviar_a_pc_y_esperar, porque si no esperas la respuesta "
                 "nunca tienes la imagen en base64 para mostrarla. "
+                "SI el usuario pide 'mándame screenshot de la PC X', 'captura de pantalla de la PC X' o similar "
+                "y está hablando por WhatsApp/Telegram, usa pedir_screenshot_de_pc(numero_pc, numero_destino) "
+                "para obtener la imagen y enviarla directamente al chat de origen. "
+                "En WhatsApp puedes pasar numero_destino explícito si el usuario lo indica; si no, se envía al chat desde donde escribió. "
+                "En Telegram siempre se envía al chat de origen. "
+                "NO uses pedir_screenshot_de_pc si el usuario solo quiere ver la captura en el frontend o en el chat de texto; "
+                "en ese caso usa enviar_a_pc_y_esperar y describe lo que veas. "
                 "Para enviar el mismo comando a todas las PCs conectadas, usa enviar_a_todas(accion, params). "
                 "Catálogo de acciones de los esclavos con sus params EXACTOS (siempre pasa los params requeridos):\n"
                 "- ping: params {} (comprueba que la PC responde)\n"
@@ -1430,7 +1538,14 @@ class DeepagentsHandler:
 
     # ──────────────────────── PUBLIC API ────────────────────────
 
-    def run(self, prompt: str, thread_id: str = "default", historial: list[dict] | None = None, memoria_largoplazo: str | None = None) -> str:
+    def run(self, prompt: str, thread_id: str = "default", historial: list[dict] | None = None, memoria_largoplazo: str | None = None, channel: str | None = None) -> str:
+        # Guardamos el canal/origen para que las tools sepan a dónde responder.
+        current_channel.set(channel)
+        if channel == "whatsapp":
+            current_whatsapp_chat.set(thread_id)
+        elif channel == "telegram":
+            current_telegram_chat.set(thread_id)
+
         config = {"configurable": {"thread_id": thread_id}}
         messages = []
         if memoria_largoplazo:

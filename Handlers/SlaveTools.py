@@ -208,6 +208,39 @@ def enviar_a_pc_y_esperar(numero_pc: int, accion: str, params: Optional[dict] = 
     )
 
 
+async def _pedir_respuesta_cruda_async(numero_pc: int, accion: str, params: Optional[dict], timeout: float) -> dict:
+    server = get_slave_server()
+    agent_id = server.get_agent_id_por_numero(numero_pc)
+
+    if not agent_id:
+        return {"status": "error", "result": f"PC {numero_pc} no existe o nunca se ha conectado."}
+    if agent_id not in server.agents:
+        return {"status": "error", "result": f"PC {numero_pc} esta desconectada."}
+
+    try:
+        return await server.send_command(agent_id, accion, params, timeout=timeout)
+    except asyncio.TimeoutError:
+        return {"status": "error", "result": f"PC {numero_pc} no respondio en {timeout}s."}
+    except Exception as e:
+        return {"status": "error", "result": f"Error enviando a PC {numero_pc}: {e}"}
+
+
+def pedir_respuesta_cruda_de_pc(numero_pc: int, accion: str, params: Optional[dict] = None, timeout: float = 30) -> dict:
+    """Como enviar_a_pc_y_esperar, pero regresa el dict tal cual lo mando el
+    esclavo ({'status': ..., 'result': ...}) en vez de un texto para el modelo.
+    NO es tool: es para codigo que necesita el payload (p. ej. el base64 de un
+    screenshot)."""
+    res = _ejecutar_en_loop_del_servidor(
+        _pedir_respuesta_cruda_async(numero_pc, accion, params, timeout),
+        wait_timeout=timeout + 15,
+    )
+    # _ejecutar_en_loop_del_servidor puede regresar un texto (timeout del hilo
+    # o envio encolado sin esperar); lo normalizamos a error.
+    if not isinstance(res, dict):
+        return {"status": "error", "result": str(res)}
+    return res
+
+
 def enviar_a_todas(accion: str, params: Optional[dict] = None) -> str:
     r"""Envía el mismo comando a todas las PCs esclavas conectadas y regresa inmediatamente.
 

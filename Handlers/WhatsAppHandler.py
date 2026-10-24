@@ -94,7 +94,7 @@ def process_whatsapp_event(event_data: dict, handler) -> dict:
                 print(f"[WHATSAPP ERROR] generando resumen: {e}")
 
         historial = _memoria.obtener_historial(numero, limite=20)
-        respuesta = handler.run(prompt, historial=historial, thread_id=numero, memoria_largoplazo=memoria_larga)
+        respuesta = handler.run(prompt, historial=historial, thread_id=numero, memoria_largoplazo=memoria_larga, channel="whatsapp")
         _memoria.guardar_mensaje(numero, "assistant", respuesta)
         print(f"[WHATSAPP] Respuesta para {numero}: '{respuesta[:100]}...'")
 
